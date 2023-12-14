@@ -243,8 +243,11 @@ _setEnv() {
 	echo "\$BASH_SOURCE or \$0:    [${BASH_SOURCE:-$0}]"
 	echo "\$BASH_SOURCE[0] or \$0: [${BASH_SOURCE[0]:-$0}]"
 	 # determine stdin/stdout and terminal details
+  [[ -t 0 ]] && _debug 'STDIN is attached to TTY'
+  [[ ! -t 0 ]] && _debug 'STDIN is attached to a pipe'
   [[ -t 1 ]] && _debug 'STDOUT is attached to TTY'
-  [[ -t 0 ]] || _debug 'STDIN is attached to pipe'
+  [[ ! -t 1 ]] && _debug 'STDOUT is attached to a pipe'
+  #[[ -t 0 ]] || _debug 'STDIN is attached to pipe'
 	[ ! -t 0 ] && _debug "stdin has data" || _debug "stdin is empty"
   [[ -p /dev/stdout ]] && _debug 'STDOUT is attached to a pipe'
   [[ ! -t 1 && ! -p /dev/stdout ]] && _debug 'STDOUT is attached to a redirection'
