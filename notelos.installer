@@ -245,6 +245,7 @@ _setEnv() {
 	 # determine stdin/stdout and terminal details
   [[ -t 1 ]] && _debug 'STDOUT is attached to TTY'
   [[ -t 0 ]] || _debug 'STDIN is attached to pipe'
+	[ ! -t 0 ] && _debug "stdin has data" || _debug "stdin is empty"
   [[ -p /dev/stdout ]] && _debug 'STDOUT is attached to a pipe'
   [[ ! -t 1 && ! -p /dev/stdout ]] && _debug 'STDOUT is attached to a redirection'
 }
