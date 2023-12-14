@@ -190,7 +190,7 @@ _getInstallOpts() {
 
 _setEnv() {
 	# determine the calling script (none of this works as expected when, eg, we
-	# call this script like "bash <(curl the-script-url)" ie "pipeinstall"
+	# call this script like "bash <(curl script-url)" ie "pipeinstall"
 	_selfNAME=$(basename "${0}")
 	_selfABSOLUTE=$(readlink -f "${0}")
 	_selfBASE=$(dirname "${_selfABSOLUTE}")
@@ -237,6 +237,7 @@ _setEnv() {
 	declare -p _notelosLAB
 	declare -p _notelosUSERNAME
 	declare -p _notelosUSEREMAIL
+	echo "\$-:                     [$-]"
 	echo "\$0:                     [$0]"
 	echo "\$BASH_SOURCE:           [$BASH_SOURCE]"
 	echo "\$BASH_SOURCE or \$0:    [${BASH_SOURCE:-$0}]"
