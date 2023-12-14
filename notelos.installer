@@ -34,6 +34,7 @@ options:
 -d          do not ask user for alternate locations
 -n <name>   alt install name         (default is notelos)
 -p <path>   alt install base path    (default is \$HOME)
+-D          enables developer mode (live repo incorporated)
 
 commands:
  install                install notelos
@@ -90,7 +91,7 @@ _fmt() {
 _getOpts () {
 	# check for global command flags and set things accordingly
 	local OPTIND
-	while getopts ":hdn:p:" flag; do
+	while getopts ":hdDn:p:" flag; do
 		case ${flag} in 
 			h)
 				_printUsage; exit 0
@@ -108,6 +109,10 @@ _getOpts () {
 			d)
 				# do not query the user for alternate locations
 				_justDo=true
+				;;
+			D)
+				# developer mode (future feature)
+				_developerMode=true
 				;;
 			?)
 				echo "invalid global option: -$OPTARG"; exit 1
@@ -184,7 +189,8 @@ _getInstallOpts() {
 }
 
 _setEnv() {
-	# determine the calling script
+	# determine the calling script (none of this works as expected when, eg, we
+	# call this script like "bash <(curl the-script-url)" ie "pipeinstall"
 	_selfNAME=$(basename "${0}")
 	_selfABSOLUTE=$(readlink -f "${0}")
 	_selfBASE=$(dirname "${_selfABSOLUTE}")
@@ -221,16 +227,20 @@ _setEnv() {
 	declare -g _notelosUSERNAME
 	declare -g _notelosUSEREMAIL
 	# print for debug
-	#declare -p _selfNAME
-	#declare -p _selfABSOLUTE
-	#declare -p _selfBASE
-	#declare -p _notelosNAME
-	#declare -p _notelosBASE
-	#declare -p _notelosHOME
-	#declare -p _notelosBIN
-	#declare -p _notelosLAB
-	#declare -p _notelosUSERNAME
-	#declare -p _notelosUSEREMAIL
+	declare -p _selfNAME
+	declare -p _selfABSOLUTE
+	declare -p _selfBASE
+	declare -p _notelosNAME
+	declare -p _notelosBASE
+	declare -p _notelosHOME
+	declare -p _notelosBIN
+	declare -p _notelosLAB
+	declare -p _notelosUSERNAME
+	declare -p _notelosUSEREMAIL
+	echo "\$0:                     [$0]"
+	echo "\$BASH_SOURCE:           [$BASH_SOURCE]"
+	echo "\$BASH_SOURCE or \$0:    [${BASH_SOURCE:-$0}]"
+	echo "\$BASH_SOURCE[0] or \$0: [${BASH_SOURCE[0]:-$0}]"
 }
 
 _install() {
@@ -431,7 +441,7 @@ main() {
 	#_debug "full command is '${_selfNAME} ${_fullCommand}'"
 	#_debug "sub command is '${_subCommand}'"
 	# run the desired command
-	[ -z "${_subCommand:-}" ] && _printUsage
+	#[ -z "${_subCommand:-}" ] && _printUsage
 	[ -n "${_subCommand:-}" ] && eval _"${_subCommand}" || exit
 }
 main "${@}"
