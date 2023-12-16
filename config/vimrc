@@ -1,0 +1,196 @@
+" studio specific vimrc
+
+" add the vim-minimap plugin
+call plug#begin()
+Plug 'wfxr/minimap.vim'
+call plug#end()
+let g:minimap_width = 10
+let g:minimap_auto_start = 0
+let g:minimap_auto_start_win_enter = 0
+
+" necessary for weird reasons (because we use -u <VIMRC>)
+set nocompatible
+
+" disable ex mode (avoid entering by accidental Q...we don't need ex mode ever)
+noremap Q <Nop>
+
+" set colors
+set t_Co=256
+
+" turn on color syntax highlighting
+syntax on
+
+" set the desired color scheme
+colorscheme desert
+
+" turn on visual bell (and audible bell off)
+set vb
+
+" keep the cursor centered in the screen
+set scrolloff=10
+
+" locate ourself (use the basename as the studio 'project')
+let cwd = getcwd()
+let StudioProject = fnamemodify(getcwd(), ':t')
+
+" colors for statusline
+hi NormalColor ctermbg=Green ctermfg=0
+hi CommandColor ctermbg=Blue ctermfg=0
+hi InsertColor ctermbg=Red ctermfg=0
+hi ReplaceColor ctermbg=Red ctermfg=0
+hi VisualColor ctermbg=Cyan ctermfg=0
+hi StatusLine ctermbg=0 ctermfg=Yellow
+hi Studio ctermbg=DarkGray ctermfg=Red
+hi Divide ctermbg=DarkGray ctermfg=0
+hi Project ctermbg=DarkGray ctermfg=Cyan
+hi ColumnCount ctermbg=DarkGray ctermfg=Gray
+" statusline
+set laststatus=2
+set statusline=%#Studio#
+" announce this as 'studio/project:file'
+set statusline+=%#Studio#
+set statusline+=studio
+set statusline+=%#Divide#/
+set statusline+=%#Project#
+set statusline+=%{StudioProject}
+set statusline+=%#Divide#:
+set statusline+=%#Project#
+set statusline+=%t
+" left/right separator
+set statusline+=%=
+" column # of cursor
+set statusline+=%#ColumnCount#
+set statusline+=%c
+" modify statusline colors based on mode
+set statusline+=%#NormalColor#%{(mode()=='n')?'\ \NORMAL\ ':''}
+set statusline+=%#InsertColor#%{(mode()=='i')?'\ \INSERT\ ':''}
+set statusline+=%#ReplaceColor#%{(mode()=='R')?'\ \REPLACE\':''}
+set statusline+=%#VisualColor#%{(mode()=='v')?'\ \VISUAL\ ':''}
+set statusline+=%#VisualColor#%{(mode()=='V')?'\ \VISUAL\ ':''}
+set statusline+=%#CommandColor#%{(mode()=='c')?'\ \COMMAND\':''}
+" reset the color to the default
+set statusline+=%#StatusLine#
+" print current line and total lines
+set statusline+=\ %-4l/%-4L
+" print word count
+set statusline+=\ wc:%-6{wordcount().words}
+
+" detect *.md as markdown (not modula2!)
+autocmd BufNewFile,BufRead *.md set filetype=markdown
+
+" general editing mode
+set wrap			" wraps text automatically
+set linebreak 			" soft wrapping (wraps long lines by word)
+set nolist			" do not show invisible characters
+set textwidth=66		" sets wrap at <=66 characters
+set formatoptions=want		" t=autowrap using textwidth; a=automatic formatting of paragraph
+set foldcolumn=6		" add white space to left column (12 is the max)
+
+func! NoteMode()
+	" like write mode but without the forced auto wrapping
+	setlocal foldcolumn=12
+	setlocal linebreak
+	setlocal textwidth=80
+endfu
+com! NM call NoteMode()
+
+"function to toggle markdownHints
+nnoremap mh :call ToggleMarkdownHints()<CR>
+let g:MarkdownHintsMode = 0
+function! ToggleMarkdownHints()
+	let g:MarkdownHintsMode = 1 - g:MarkdownHintsMode
+	if (g:MarkdownHintsMode == 0)
+		wincmd l
+		:close
+	else
+		botright :60vsplit ~/studio/.hints/markdown.hints
+		setlocal statusline=%=\ markdown-hints\(mh\)
+		wincmd h " return focus back to left
+	endif
+endfunction
+
+" function to toggle vimhints
+nnoremap vh :call ToggleVimHints()<CR>
+let g:VimHintsMode = 0
+function! ToggleVimHints()
+	let g:VimHintsMode = 1 - g:VimHintsMode
+	if (g:VimHintsMode == 0)
+		wincmd l
+		:close
+	else
+		botright :60vsplit ~/studio/.hints/vim.hints
+		setlocal statusline=%=\ vim-hints\(vh\)
+		wincmd h
+	endif
+endfunction
+
+
+" launch johnson with F7
+function! Johnson()
+	let l:initialWord = expand('<cword>')
+	if len(l:initialWord) == 0
+		terminal ++rows=25 johnson "nothing"
+	else
+		terminal ++rows=25 johnson <cword>
+	endif
+	hi DICT ctermbg=DarkYellow ctermfg=Green
+	setlocal statusline=%#DICT#%=johnson
+endfunction
+map <F7> :call Johnson()<CR>
+
+
+" launch the wordnet.studio dictionary with F6
+function! WordnetStudio()
+	let l:initialWord = expand('<cword>')
+	if len(l:initialWord) == 0
+		terminal ++rows=25 wordnet.studio "nothing"
+	else
+		terminal ++rows=25 wordnet.studio <cword>
+	endif
+	hi DICT ctermbg=DarkYellow ctermfg=Green
+	setlocal statusline=%#DICT#%=wordnet.studio
+endfunction
+map <F6> :call WordnetStudio()<CR>
+
+" key mappings
+let mapleader = ','
+" insert mode maps
+" delete last word typed and append (this is what <c-w> does
+imap <c-d> <esc>diwA
+" reverse last two characters and return to end of line
+imap <c-r> <esc>XpA
+
+" cursor color
+if &term =~ "xterm\\|rxvt"
+  " use a red cursor in insert mode
+  let &t_SI = "\<Esc>]12;red\x7"
+  " use a green cursor otherwise
+  let &t_EI = "\<Esc>]12;cyan\x7"
+  silent !echo -ne "\033]12;cyan\007"
+  " reset cursor when vim exits
+  autocmd VimLeave * silent !echo -ne "\033]112\007"
+endif
+" set fast cursor switching
+set ttimeout
+set ttimeoutlen=1
+set ttyfast
+
+" kep mappings
+map = dd
+
+" autocorrect common typos
+iab teh the
+
+" map F2 to toggle minimap on/off
+map <F2> :MinimapToggle<CR>
+
+" spellcheck
+set spelllang=en_us
+hi clear SpellBad
+hi SpellBad ctermbg=LightYellow ctermfg=Black
+hi SpellCap ctermbg=LightCyan ctermfg=Black
+hi SpellLocal ctermbg=LightGreen ctermfg=Black
+hi SpellRare ctermbg=LightBlue ctermfg=Black
+" toggle spell highlighting with F5
+map <F5> :set spell!<cr>
+

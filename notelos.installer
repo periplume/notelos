@@ -41,11 +41,12 @@ commands:
  upgrade                upgrade notelos
 
 install options
- install -s <file>   specify specific file
- install -f          replaces existing files (without confirmation!)
  install -b          use \$_notelosHOME/.bin
                        (default is $HOME/bin, ie \$_notelosBASE/bin)
 
+upgrade options
+ upgrade -s <file>   specify specific file
+ upgrade -f          replaces existing files (without confirmation!)
 EOF
 }
 
@@ -97,17 +98,17 @@ _getOpts () {
 				_printUsage; exit 0
 				;;
 			n)
-				_altNAME=${OPTARG}
 				_warn "setting _altNAME to '${OPTARG}'"
+				_altNAME=${OPTARG}
 				_justDo=true
 				;;
 			p)
-				_altBASE=${OPTARG}
 				_warn "setting _altBASE to '${OPTARG}'"
-				_justDO=true
+				_altBASE=${OPTARG}
+				_justDo=true
 				;;
 			d)
-				# do not query the user for alternate locations
+				# do not query the user
 				_justDo=true
 				;;
 			D)
@@ -157,7 +158,30 @@ _getInstallOpts() {
 	set -- ${_subCommand}
 	# ignore the subcommand itself
 	shift
-	while getopts ":fbs:" flag; do
+	while getopts ":b" flag; do
+		case ${flag} in
+			b)
+				# store the notelos suite of scripts in _notelosHOME/.bin
+				_binIntegral=true
+				_warn "using '\$_notelosHOME/.bin' for executables"
+				;;	
+			\?)
+				 _error "${FUNCNAME[0]}: unknown flag '-$OPTARG'"; exit 1
+				;;
+			:)
+				_error "${FUNCNAME[0]}: arg required for '${flag}'"; exit 1
+				;;
+		esac
+	done
+	shift $((OPTIND - 1))
+}
+
+_getUpgradeOpts() {
+	# use the _subCommand string (set in _getOpts)
+	set -- ${_subCommand}
+	# ignore the subcommand itself
+	shift
+	while getopts ":fs:" flag; do
 		case ${flag} in
 			s)
 				# don't allow flags to be arguments to flags
@@ -172,11 +196,6 @@ _getInstallOpts() {
 				_forceInstall=true
 				_warn "performing an unsafe 'force' install"
 				;;
-			b)
-				# store the notelos suite of scripts in _notelosHOME/.bin
-				_binIntegral=true
-				_warn "using .bin in notelosHOME for executables"
-				;;	
 			\?)
 				 _error "${FUNCNAME[0]}: unknown flag '-$OPTARG'"; exit 1
 				;;
@@ -189,17 +208,22 @@ _getInstallOpts() {
 }
 
 _setEnv() {
-	# determine the calling script (none of this works as expected when, eg, we
-	# call this script like "bash <(curl script-url)" ie "pipeinstall"
+	# set up the initial environment details
+	# determine the calling script
+	#TODO move to use BASH_SOURCE[0] instead (or abandon this)
+	# experimenting with a "pipe install" shows that using these methods to
+	# determine what we need is completely unreliable
 	_selfNAME=$(basename "${0}")
 	_selfABSOLUTE=$(readlink -f "${0}")
 	_selfBASE=$(dirname "${_selfABSOLUTE}")
 	# determine the intended destination
-	_notelosNAME=${_altNAME:-${_selfNAME%%.*}}
+	#_notelosNAME=${_altNAME:-${_selfNAME%%.*}}  # unreliable (if piped)
+	_notelosNAME=${_altNAME:-notelos}
 	_notelosBASE=$(readlink -f "${_altBASE:-${HOME}}")
 	_notelosHOME=$(realpath "${_notelosBASE}/${_notelosNAME}")
 	_notelosLAB=${_selfBASE}
 	# settle the scripts location and PATH
+	#TODO consider changing to $HOME/.local/bin as default
 	if [ "${_binIntegral:-false}" = true ]; then
 		# user specified to pack the scripts within _notelosHOME
 		_notelosBIN="${_notelosHOME}/.bin"
@@ -207,14 +231,14 @@ _setEnv() {
 		# otherwise, the scripts will go to $HOME/bin
 		_notelosBIN="${HOME}/bin"
 	fi
-	# determine user and email
+	# determine user and email from git if possible
 	git config --global --get user.name 1>/dev/null && _notelosUSERNAME=$(git config --global --get user.name)
 	git config --global --get user.email 1>/dev/null && _notelosUSEREMAIL=$(git config --global --get user.email)
 	[ -z "${_notelosUSERNAME:-}" ] && _notelosUSERNAME=$(whoami)
 	[ -z "${_notelosUSEREMAIL:-}" ] && _notelosUSEREMAIL="unknown"
-	# determine the validity of the intended destination
-	[ -d "${_notelosBASE}" ] || { _error "base '${_notelosBASE}' does not exist"; exit 1; }
-	[ -w "${_notelosBASE}" ] || { _error "can't write in given path '${_notelosBASE}'"; exit 1; }
+	# determine the validity of the intended destination (broadly)
+	[ -d "${_notelosBASE}" ] || { _warn "base '${_notelosBASE}' does not exist"; }
+	[ -w "${_notelosBASE}" ] || { _warn "can't write in given path '${_notelosBASE}'"; }
 	# make these global
 	declare -g _selfNAME
 	declare -g _selfABSOLUTE
@@ -227,46 +251,19 @@ _setEnv() {
 	declare -g _notelosUSERNAME
 	declare -g _notelosUSEREMAIL
 	# print for debug
-	declare -p _selfNAME
-	declare -p _selfABSOLUTE
-	declare -p _selfBASE
-	declare -p _notelosNAME
-	declare -p _notelosBASE
-	declare -p _notelosHOME
-	declare -p _notelosBIN
-	declare -p _notelosLAB
-	declare -p _notelosUSERNAME
-	declare -p _notelosUSEREMAIL
-	echo "\$-:                     [$-]"
-	echo "\$0:                     [$0]"
-	echo "\$BASH_SOURCE:           [$BASH_SOURCE]"
-	echo "\$BASH_SOURCE or \$0:    [${BASH_SOURCE:-$0}]"
-	echo "\$BASH_SOURCE[0] or \$0: [${BASH_SOURCE[0]:-$0}]"
-	 # determine stdin/stdout and terminal details
-  [[ -t 0 ]] && _debug 'STDIN is attached to TTY'
-  [[ ! -t 0 ]] && _debug 'STDIN is attached to a pipe'
-  [[ -t 1 ]] && _debug 'STDOUT is attached to TTY'
-  [[ ! -t 1 ]] && _debug 'STDOUT is attached to a pipe'
-  #[[ -t 0 ]] || _debug 'STDIN is attached to pipe'
-	[ ! -t 0 ] && _debug "stdin has data" || _debug "stdin is empty"
-  [[ -p /dev/stdout ]] && _debug 'STDOUT is attached to a pipe'
-  [[ ! -t 1 && ! -p /dev/stdout ]] && _debug 'STDOUT is attached to a redirection'
+	#declare -p _selfNAME
+	#declare -p _selfABSOLUTE
+	#declare -p _selfBASE
+	#declare -p _notelosNAME
+	#declare -p _notelosBASE
+	#declare -p _notelosHOME
+	#declare -p _notelosBIN
+	#declare -p _notelosLAB
+	#declare -p _notelosUSERNAME
+	#declare -p _notelosUSEREMAIL
 }
 
 _install() {
-	local _installTO=${_notelosHOME}
-	local _installFROM=${_notelosLAB}
-	# warn if the dir is not new and not empty
-	if [ -e "${_installTO}" ]; then
-	 	_warn "path '${_installTO}' exists"
-		if [ ! -z "$(ls -A "${_notelosHOME}")" ]; then
-			_warn "path '${_notelosHOME}' is NOT empty"
-		fi
-		_ask "use '${_installTO}' anyway? [y/n] "
-		{ read -rn1 _answer; echo; }
-		[[ ${_answer:-} = "y" ]] && unset _answer || { _warn "user aborted"; exit 1; }
-		_proceed=true
-	fi
 	# finalize the source and destination for the operation
 	# (respect the -d global flag)
 	if [ "${_justDo:-false}" = false ]; then
@@ -278,7 +275,7 @@ _install() {
 		_ask "enter base location for installation [$(_fmt path "${_notelosBASE}")] "
 		read _base
 		[ -z "${_base}" ] || declare -g _notelosBASE=${_base}
-		[[ -e "${_notelosBASE}" ]] || { _warn "'${_notelosBASE}' not found"; exit 1; }
+		[[ -e "${_notelosBASE}" ]] || { _warn "'${_notelosBASE}' not found"; }
 		declare -g _notelosHOME=${_notelosBASE}/${_notelosNAME}
 		#  lab location (ie git repo) can be modified during install
 		_ask "enter path for git source repo [$(_fmt path "${_notelosLAB}")] "
@@ -298,19 +295,17 @@ _install() {
 		read _useremail
 		[ -z "${_useremail}" ] || declare -g _notelosUSEREMAIL=${_useremail}
 		#TODO validate email format
-		# create a user gitconfig if it does not exist
+		# create a global user gitconfig if it does not exist
 		if [ ! -e "$HOME/.gitconfig" ]; then
 			git config --global user.name "${_notelosUSERNAME}"
 			git config --global user.email "${_notelosUSEREMAIL}"
 			git config --global includeif.gitdir:"${_notelosHOME}".path "${_notelosHOME}/.gitconfig"
+		else
+			#TODO should ask the user if this is ok
+			git config --global includeif.gitdir:"${_notelosHOME}".path "${_notelosHOME}/.gitconfig"
 		fi
-		# reset locations based on input
-		_installTO=${_notelosBASE}/${_notelosNAME}
-		_installFROM=${_notelosLAB}
 	fi
 	# the source and destination are resolved
-	_debug "$(declare -p _installTO)"
-	_debug "$(declare -p _installFROM)"
 	_debug "$(declare -p _selfNAME)"
 	_debug "$(declare -p _selfABSOLUTE)"
 	_debug "$(declare -p _selfBASE)"
@@ -321,16 +316,30 @@ _install() {
 	_debug "$(declare -p _notelosBIN)"
 	_debug "$(declare -p _notelosUSERNAME)"
 	_debug "$(declare -p _notelosUSEREMAIL)"
+	#
 	# check if _notelosBIN is in the PATH
 	_checkPath "${_notelosBIN}" || _warn "you should add '${_notelosBIN}' to your \$PATH"
-	# determine the validity of the intended destination (after possible changes)
+	# determine the validity of the intended destination (after user input)
 	[ -d "${_notelosBASE}" ] || { _error "base '${_notelosBASE}' does not exist"; exit 1; }
 	[ -w "${_notelosBASE}" ] || { _error "can't write in given path '${_notelosBASE}'"; exit 1; }
+	# warn if the dir is not new and not empty
+	if [ -e "${_notelosHOME}" ]; then
+	 	_warn "path '${_notelosHOME}' exists"
+		if [ ! -z "$(ls -A "${_notelosHOME}")" ]; then
+			_warn "path '${_notelosHOME}' is NOT empty"
+		fi
+		_ask "use '${_notelosHOME}' anyway? [y/n] "
+		{ read -rn1 _answer; echo; }
+		#TODO would be nice to detect CR and depending, send that echo or not
+		[[ ${_answer:-} = "y" ]] && unset _answer || { _warn "user aborted"; exit 1; }
+		# set this so we can carry on later when we check dirs
+		_proceed=true
+	fi
 	# now make the notelosHOME directory structure
 	[[ -e "${_notelosHOME}" && $_proceed != true ]] && { _error "'${_notelosHOME}' already exists"; exit 1; }
-	mkdir "${_notelosHOME}"
+	[ ! -d "${_notelosHOME}" ] && mkdir "${_notelosHOME}"
 	mkdir "${_notelosHOME}/.config"		# vimrc etc
-	mkdir "${_notelosHOME}/.code"			# make this the lab and integrate dev
+	mkdir "${_notelosHOME}/.code"			# make this the lab and integrate dev (future)
 	mkdir "${_notelosHOME}/.state"		# state files
 	mkdir "${_notelosHOME}/.log"			# log files
 	mkdir "${_notelosHOME}/.mount"		# dsink mount
@@ -338,14 +347,11 @@ _install() {
 	mkdir "${_notelosHOME}/.bin"			# alt working executables (default is still $HOME/bin)
 	# now make bin if it's not there
 	[ -d "${_notelosBIN}" ] || mkdir "${_notelosBIN}"
-	# put the binary files in place
-	if [[ ${_specificFile:-} ]] ; then
-		_installFile "${_notelosLAB}/bin/${_specificFile}" "${_notelosBIN}/${_specificFile}"
-	else
-		for _file in $(ls "${_notelosLAB}/bin"); do
-			_installFile "${_notelosLAB}/bin/${_file}" "${_notelosBIN}/${_file}"
-		done
-	fi
+	# now put the binary files in place
+	#TODO check for the existence first...otherwise ls errs
+	for _file in $(ls "${_notelosLAB}/bin"); do
+		_installFile "${_notelosLAB}/bin/${_file}" "${_notelosBIN}/${_file}"
+	done
 	# now do the config files
 	for _configFile in $(ls "${_notelosLAB}/config"); do
 		_installFile "${_notelosLAB}/config/${_configFile}" "${_notelosHOME}/.config/${_configFile}"
@@ -356,6 +362,9 @@ _install() {
 	done
 	# create the git repo
 	git init -q -b main "${_notelosHOME}"
+	# update notelos git config with user and email here
+	git -C "${_notelosHOME}" config user.name "${_notelosUSERNAME}"
+	git -C "${_notelosHOME}" config user.email "${_notelosUSEREMAIL}"
 	# update the git ignore file
 	echo ".code" >> "${_notelosHOME}/.gitignore" 
 	echo ".bin" >> "${_notelosHOME}/.gitignore" 
@@ -363,11 +372,14 @@ _install() {
 	echo ".mount" >> "${_notelosHOME}/.gitignore" 
 	echo ".log" >> "${_notelosHOME}/.gitignore"
 	# add gitignore and components to be tracked in git
-	git -C "${_notelosHOME}" add .gitignore
-	git -C "${_notelosHOME}" add .config/*
-	git -C "${_notelosHOME}" add .hints/*
+	git -C "${_notelosHOME}" add "${_notelosHOME}/.gitignore"
+	git -C "${_notelosHOME}" add "${_notelosHOME}/.config/*"
+	git -C "${_notelosHOME}" add "${_notelosHOME}/.hints/*"
+	#TODO update the repo description file
 	# make a first commit
-	git -C "${_notelosHOME}" commit -m "[genesis] ${_notelosNAME} created by ${_notelosUSERNAME}"
+	git -C "${_notelosHOME}" commit -q -m "[genesis] ${_notelosNAME} created by ${_notelosUSERNAME}"
+	_info "success...to begin, run 'notelos' after adjusting PATH"
+	#TODO check and warn about required external commands
 }
 
 # copy wrapper with safeguards

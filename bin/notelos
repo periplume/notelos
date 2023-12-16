@@ -1,0 +1,958 @@
+#!/usr/bin/env bash
+# file: notelos
+# source: https://github.com/periplume/notelos.git
+# author: jason@bloom.us
+
+# SCRIPT AND SHELL SETTINGS
+set -o errexit
+set -o nounset
+set -o pipefail
+
+# prevent this file from being sourced
+(return 0 2>/dev/null) && { echo "notelos cannot be sourced"; return; }
+
+###########################
+# LIBRARY SOURCES
+###########################
+
+# source our library commands
+# use the library file from the same directory if possible
+# otherwise use the regular search through path method
+[[ -e "$(dirname $0)/notelos-lib.sh" ]] \
+	&& source "$(dirname $0)/notelos-lib.sh" \
+	|| source notelos-lib.sh
+
+################################
+# LOGGING AND CONSOLE OVERRIDES
+################################
+
+# debugging and logging default settings
+# debug toggle (set to true to enable default global debugging)
+_notelosDEBUG=true
+# silent mode for scripting (supresses all output)
+#TODO not fully implemented
+_notelosSILENT=false
+# logging facility
+_notelosLOG=false
+
+# the log/console functions instantited now will be re-initialized after all the
+# command line parameters are processed, ie modified by flags
+# see the _fLOG function in notelos-lib.sh
+#_fLOG
+
+
+##################################################
+# LOGGING AND CONSOLE MESSAGES AND USER INTERFACE
+##################################################
+
+_fLOG() {
+	# collapsing function...sets up according to the static determinants
+	# creates all log functions dynamically (based on defaults plus positional
+	# parameters)
+	#
+	# set the notelos modes to generic names
+	_DEBUG=${_notelosDEBUG:-false}
+	_SILENT=${_notelosSILENT:-false}
+	_LOG=${_notelosLOG:-false}
+	_LOGGING=${_notelosLOGGING:-false}
+	_LOGFILE=${_notelosLOGFILE:-/dev/null}
+	# 
+	local _log=0
+	local _console=0
+	local _color=0
+	# if _SILENT is false or unset, assume interactive
+	[[ "${_SILENT:-}" = "false" ]] && _console=1
+	# if _LOG and _LOGGING is true, log
+	[[ "${_LOG:-}" = "true" && "${_LOGGING:-}" = "true" ]] && _log=1
+	# if we have color, print in color
+	#TODO remove the tput requirement here
+	[[ $(tput colors) ]] && _color=1
+	#
+	# set up colors	
+	_cDebug=$(tput setaf 6)
+	_cInfo=$(tput setaf 2)
+	_cWarn=$(tput setaf 11)
+	_cError=$(tput setaf 1)
+	_cAsk=$(tput setaf 0; tput setab 11)
+	_cReset=$(tput sgr0)
+	# create 5 log functions based on static determinants above
+	# CONSOLE AND LOG
+	if [[ $_console = 1 && $_log = 1 ]]; then
+		_debug() {
+			[[ "$_DEBUG" = "false" ]] && return
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s\n' "${_cDebug}DEBUG${_cReset}" "${@}" >&2
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cDebug}DEBUG${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_info() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cInfo}INFO${_cReset}" "${@}" >>${_LOGFILE}
+			# hack: below prints _info...multi-line messages are indented
+			SAVEIFS=$IFS
+			IFS=$'\n'
+			_pList=(${1})
+			IFS=$SAVEIFS
+			if [[ ${#_pList[@]} -gt 1 ]]; then
+				printf '%s %s\n' "${_cInfo}INFO${_cReset}" "${_pList[0]} "
+				for (( i=1; i<${#_pList[@]}; i++ ))
+				do
+					printf "\t\t: %s\n" "${_pList[$i]} "
+				done
+			else
+				printf "%s %s\n" "${_cInfo}INFO${_cReset}" "${1} "
+			fi
+		}
+		_warn() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s\n' "${_cWarn}WARN${_cReset}" "${@}"
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cWarn}WARN${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_error() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s\n' "${_cError}ERROR${_cReset}" "${@}"
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cError}ERROR${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_ask() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s' "${_cAsk}USER${_cReset}" "${@}"
+			#printf '%s %s %s\n' "$_timeStamp" "${self} ${_cAsk}USER${_cReset}" "${@}" >>${_LOGFILE}
+			# don't log prompts...if something is important, log as debug
+		}
+	# LOG ONLY
+	elif [[ $_console = 0 && $_log = 1 ]]; then
+		_debug() {
+			[[ "$_DEBUG" = "false" ]] && return
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cDebug}DEBUG${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_info() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cInfo}INFO${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_warn() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cWarn}WARN${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_error() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cError}ERROR${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_ask() {
+			:
+			#local _timeStamp=$(date +%s.%N)
+			#printf '%s %s %s\n' "$_timeStamp" "${self} ${_cAsk}USER${_cReset}" "${@}" >>${_studioLOGFILE}
+			# don't log _ask prompts
+		}
+	# CONSOLE ONLY
+	elif [[ $_console = 1 && $_log = 0 ]]; then
+		_debug() {
+			[[ "$_DEBUG" = "false" ]] && return
+			printf '%s %s\n' "${_cDebug}DEBUG${_cReset}" "${@}" >&2 
+		}
+		_info() {
+			printf '%s %s\n' "${_cInfo}INFO${_cReset}" "${@}"
+		}
+		_warn() {
+			printf '%s %s\n' "${_cWarn}WARN${_cReset}" "${@}"
+		}
+		_error() {
+			printf '%s %s\n' "${_cError}ERROR${_cReset}" "${@}"
+		}
+		_ask() {
+			printf '%s %s' "${_cAsk}USER${_cReset}" "${@}"
+		}
+	else
+		# do nothing
+		_debug() { : ; }
+		_info() { : ; }
+		_warn() { : ; }
+		_error() { : ; }
+		_ask() { : ; }
+	fi
+	export -f _debug
+	export -f _info
+	export -f _warn
+	export -f _error
+	export -f _ask
+}
+_fLOG
+
+###########################
+# PREREQUISITES
+###########################
+ 
+# required commands
+_requiredCommands=(git dsink fzf tput)
+
+###########################
+# ENVIRONMENT SETTINGS
+###########################
+
+# WORKING ENVIRONMENT
+# the name of the working environment (ie directory)
+# modify with global -a flag
+_notelosNAME=notelos
+
+# the base working directory (default is $HOME)
+# modify with global -w flag
+_notelosBASE="$HOME"
+
+# the working directory itself
+_notelosHOME="${_notelosBASE}/${_notelosNAME}"
+
+# the development environment is kept separate (and optional)
+_notelosLAB="$HOME/lab/${_notelosNAME}"
+
+####################################
+# HELPER FUNCTIONS
+####################################
+
+_printUsage () {
+  cat << EOF
+usage: notelos [OPTIONS] <command> [OPTIONS]
+
+options:
+ -h      print this usage info
+ -l      log commands and debug info to log file
+ -d      print debug info to stdout and/or log
+ -D      run with bash 'set -x'
+ -s      suppress all stdout/stderr
+ -x      start in OFFLINE mode
+ -v      print version number and exit
+
+alternate env settings:
+ -a <name>  set the studio name to <name>
+ -w <path>  set the working dir to /<path>/<name>
+            default is \$HOME/<name>
+
+commands:
+ none yet
+EOF
+}
+
+_printInfo () {
+  cat << EOF
+notelos opens the editor like other scripts
+EOF
+}
+
+####################################
+# PARAMETER PROCESSING FUNCTIONS
+####################################
+
+_getOpts () {
+	# check for global command flags and set things accordingly
+	local OPTIND
+	while getopts ":hsdDlxva:w:" flag; do
+		case ${flag} in 
+			h)
+				_printInfo ; _printUsage; exit 0
+				;;
+			a)
+				_notelosNAME=${OPTARG}
+				_info "${FUNCNAME[0]} using alternative notelos name '${OPTARG}'"
+				;;
+			w)
+				_notelosBASE=${OPTARG}
+				_info "${FUNCNAME[0]} using alternative base path '${OPTARG}'"
+				;;
+ 	    s)
+				_notelosSILENT=true
+				;;
+			d)
+				_notelosDEBUG=true
+				_debug "${FUNCNAME[0]}: enabled debug mode with flag '-$flag'"
+				;;
+			D)
+				set -x
+				;;
+			l)
+				_notelosLOG=true
+				;;
+			x)
+				_notelosONLINE=false
+				;;
+			v)
+				_info "verion: beta"; exit 0
+				;;
+			?)
+				_error "invalid global option: -$OPTARG"; exit 1
+				;;
+		esac
+	done
+	shift $((OPTIND - 1))
+	# $_subCommand is used to process the subcommand options below
+	export _subCommand="${@}"
+	#_debug "${FUNCNAME[0]} _studioLOG=${_studioLOG}"
+	#_debug "${FUNCNAME[0]} _studioSILENT=${_studioSILENT}"
+	#_debug "${FUNCNAME[0]} _studioDEBUG=${_studioDEBUG}"
+	return
+}
+
+_getSubcommand() {
+	# look for the first subcommand and set _subCommand accordingly
+	while ((${#})); do
+		#_debug "${FUNCNAME}: reading parameter '${1}'"
+		case $1 in
+			help)
+				_printInfo ; _printUsage; exit 0
+				;;
+			status)
+				#_debug "${FUNCNAME}: '$1' called, checking for $1 flags now"
+				_subCommand=$1
+				return
+				;;
+			*)
+				_error "'${1}' is not a subcommand"
+				return 1
+				;;
+		esac
+		shift
+	done
+}
+
+_setEnv() {
+  # set (and print) the environment details
+  _info "setting up environment now"
+  # determine stdin/stdout/stderr particulars
+	[[ -t 0 ]] && _STDIN=term || _STDIN=pipe
+  [[ -t 1 ]] && _STDOUT=term || _STDOUT=pipe
+	[[ -t 2 ]] && _STDERR=term || _STDERR=pipe
+  [[ -p /dev/stdout ]] && _STDOUT=namedpipe
+  [[ ! -t 1 && ! -p /dev/stdout ]] && _STDOUT=redirection
+	_debug "STDIN is attached to a ${_STDIN}" 
+	_debug "STDOUT is attached to a ${_STDOUT}" 
+	_debug "STDERR is attached to a ${_STDERR}" 
+	# determine details about the terminal
+  _debug "terminal emulator guess is '$(_termDetect)'"
+  _debug "terminal advertised (\$TERM) as '${TERM}'"
+  _debug "tty device file is '$(tty)'"
+	_debug "terminal color capability advertised (\$COLORTERM) as '${COLORTERM}'"
+	_debug "terminal color count hueristic reports '$(_getTerminalCOLORCOUNT)'"
+	_isTerminalDARK && _TERMLIGHTMODE=dark || _TERMLIGHTMODE=light
+	_debug "terminal theme appears to be '$_TERMLIGHTMODE'" 
+	_debug "terminal size (width:height) is '$(_getTERMDIMENSIONS)'"
+	[[ $COLUMNS -lt 100 || $LINES -lt 24 ]] && _warn "terminal size deficiency; 80x24 is min, width > 100 recommended"
+	# determine shell details
+  _debug "shell (\$SHELL) is '${SHELL}'"
+	_debug "bash version (\$BASH_VERSION) is '$BASH_VERSION"
+  _debug "shell pid (\$\$) is '$$'"
+	_debug "parent pid is '$(ps -o ppid= -p $$)'"
+	_debug "shell option flags (\$-) are '$-'"
+	_debug "shell options (\$BASHOPTS): $BASHOPTS"
+	_debug "shell \$PATH is: $PATH"
+	_debug "shell user name is '$(whoami)'"
+	_debug "user and group info (\$id) is '$(id)'"
+  # get the name and absolute path of the calling script
+	_selfNAME=$(basename "${BASH_SOURCE[0]}")
+  _selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
+  _selfBASE=$(dirname "${_selfABSOLUTE}")
+	_selfCALL=${0}
+	_selfPWD=$(pwd)
+	_debug "script name (basename) is '${_selfNAME}'"
+	_debug "script call (\$0) is '${_selfCALL}'"
+  _debug "script absolute path is '${_selfABSOLUTE}'"
+  _debug "script base dir is '${_selfBASE}'"
+	_debug "caller's current working dir (\$pwd) is '${_selfPWD}'"
+	# determine the home
+	_notelosHOME="${_notelosBASE}/${_notelosNAME}"
+  _debug "${FUNCNAME[0]} _notelosNAME=${_notelosNAME}"
+  _debug "${FUNCNAME[0]} _notelosBASE=${_notelosBASE}"
+  _debug "${FUNCNAME[0]} _notelosHOME=${_notelosHOME}"
+  _debug "${FUNCNAME[0]} _notelosLAB=${_notelosLAB}"
+  # set up git path and command
+	_notelosGITDISK="${_notelosHOME}/.git"
+	_notelosGIT="git --git-dir=${_notelosGITDISK}"
+  _debug "${FUNCNAME[0]} git version: '$(${_notelosGIT} -v)'"
+  _debug "${FUNCNAME[0]} git disk: '${_notelosGITDISK}'"
+  _debug "${FUNCNAME[0]} git command: '${_notelosGIT}'"
+  # set up log details
+  _notelosLOGFILE="${_notelosHOME}/.log/${_notelosNAME}.log"
+  [[ -f "${_notelosLOGFILE}" ]] && _notelosLOGGING=true
+  _debug "${FUNCNAME[0]} ${_notelosNAME} logfile: ${_notelosLOGFILE}"
+  _debug "${FUNCNAME[0]} _notelosLOGGING=${_notelosLOGGING:-false}"
+  _debug "${FUNCNAME[0]} _notelosDEBUG=${_notelosDEBUG}"
+  _debug "${FUNCNAME[0]} _notelosSILENT=${_notelosSILENT}"
+  _debug "${FUNCNAME[0]} _notelosLOG=${_notelosLOG}"
+	exit
+	# set up the user name (from git)
+  if [[ -f "${_notelosGITDISK:-}/config" ]]; then
+    _notelosUSERNAME=$(git -C "${_notelosGITDISK}" config --get user.name)
+  else
+		_notelosUSERNAME=$(git config --get user.name) || _notelosUSERNAME=$(whoami)
+  fi
+  _debug "${FUNCNAME[0]} user name: '${_notelosUSERNAME}'"
+	# test the network (unless explicitly OFFLINE with -x switch)
+	[[ ${_notelosONLINE:-} != false ]] && _isOnline && _notelosONLINE=true
+  _debug "${FUNCNAME[0]} online: ${_notelosONLINE:-false}"
+	# export the important variables
+	export _selfABSOLUTE
+	export _notelosNAME
+	export _notelosBASE
+	export _notelosHOME
+	export _notelosLAB
+	export _notelosGITDISK
+	export _notelosGIT
+	export _notelosLOGFILE
+	export _notelosLOGGING
+	export _notelosUSERNAME
+	export _notelosUSEREMAIL
+	export _notelosDEBUG
+	export _notelosSILENT
+	export _notelosLOG
+	export _notelosONLINE
+	# reinitialize log functions after processing all command line options
+	_fLOG
+}
+
+_isEnvSufficient() {
+	# check for required tools, report accordingly
+	local _sufficient=true
+	for _required in "${_requiredCommands[@]}"; do
+		if ! hash "${_required}" 2>/dev/null; then
+			_warn "${FUNCNAME}: ${_required} not found"
+			_sufficient=false
+		else
+			_debug "${FUNCNAME}: ${_required} found"
+		fi
+	done
+	[ ${_sufficient} = true ] && return 0 || return 1
+}
+
+#################################
+# SUBCOMMAND OPTION PROCESSING
+#################################
+
+# set fzf display properties
+# colorscheme
+# context: light/dark
+# attributes
+#
+# color problem vexes me
+# 1. terminal capability
+#			256+
+#			16
+#			8
+#			0
+# that dictates the basic scheme
+# ie use the lowest common denominator for types
+# 8
+# thus
+# 
+    #\033[30m: Black
+    #\033[31m: Red
+    #\033[32m: Green
+    #\033[33m: Yellow
+    #\033[34m: Blue
+    #\033[35m: Magenta
+    #\033[36m: Cyan
+    #\033[37m: White
+# thus
+# apply attributes to template
+# dark
+# light
+# 
+
+# _noam
+# filter to validate name
+#   is it legal (alpha, etc)
+#   length etc
+#   unique
+#   special rules
+#   depth check
+#   live feedback to fzf preview {}
+#   pass as env variables (exported)
+#   
+
+_name() {
+	# the thing naming function
+	local _newName
+	# define min and max lengths of the thing to name
+	export _minLength=1
+	export _maxLength=80
+	_isNameNew() {
+		# arg 1 = proposed new name
+		# return 0 if new, 1 if not
+		[[ -z "${1}" ]] && return 1
+		_existingNames=$(ls .)
+		for e in ${_existingNames}; do
+			if [ "${1}" = "${e}" ]; then
+				return 1
+			fi
+		done
+		return 0
+		}
+	export -f _isNameNew
+	_fzfPreviewWindow() {
+			# function used within fzf preview window to assist in the selection of a
+      # new project name
+      local _proposedName
+      local lengthStatus
+      local unique
+      local allowedChars="n/a"
+      local lead="n/a"
+      local last="n/a"
+      local repeat="n/a"
+      local acceptable="NO"
+			_cStat() {
+        # arg 1 = key word
+        # print the key word in a set color
+        [[ "${1}" =~ ^(YES|OK) ]] && tput setaf 2
+        [[ "${1}" =~ ^(NO|TOO) ]] && tput setaf 1
+        [[ "${1}" =~ ^(n/a) ]] && tput setaf 3
+        echo -n "${1}"
+        tput sgr0
+      }
+			# export to fzf for --preview
+      export -f _cStat
+			# validate the length
+      if [[ ${#1} -lt ${_minLength} ]]; then
+        lengthStatus="TOO SHORT"
+      elif [[ ${#1} -gt ${_maxLength} ]]; then
+        lengthStatus="TOO LONG"
+      else
+        lengthStatus="OK"
+      fi
+			# make sure it's new
+      _isNameNew "${1}" && { unique="YES" ; acceptable="YES"; } || { unique="NO" ; acceptable="NO"; }
+			# check the other naming criteria
+			# must start with an alphanumeric character
+			[[ "${1}" =~ ^[[:alpha:]|[:digit:]] ]] && lead="YES" || { lead="NO" ; acceptable="NO" ; }
+			# must end with an alphanumeric character
+      [[ "${1}" =~ [[:alpha:]|[:digit:]]$ ]] && last="YES" || { last="NO" ; acceptable="NO" ; }
+      [[ "${1}" =~ ^([[:alpha:]|[:digit:]]|[ -_.;:?\"\'()&!])*$ ]] && allowedChars="YES" || { allowedChars="NO" ; acceptable="NO" ; }
+      [[ ! "${1}" =~ ([.]|[-]|[_]){2} ]] && repeat="YES" || { repeat="NO" ; acceptable="NO" ; }
+      # print the validation info into the fzf preview window 
+      echo "----VALID NAME?  $(_cStat ${acceptable}) --------------"
+      [[ -z "${1}" ]] && echo "waiting for input..." || echo "name: $(tput setaf 3)${1}$(tput sgr0)"
+      printf "length [%.2d]: %31s\n" ${#1} "$(_cStat "${lengthStatus}")"
+      printf "unique: %36s\n" "$(_cStat "${unique}")"
+      printf "character set allowed: %21s\n" "$(_cStat "${allowedChars}")"
+      printf "first ['%s'] allowed: %23s\n" "${1:0:1}" "$(_cStat "${lead}")"
+      printf "last ['%s'] allowed: %24s\n" "${1:(-1)}" "$(_cStat "${last}")"
+      printf "no non-alpha/num repeats: %18s\n" "$(_cStat "${repeat}")"
+      echo "-----------RULES------------------"
+      echo "the name must be unique"
+      echo "max length is ${_maxLength}, min is ${_minLength}"
+      echo "lower case and numbers only"
+      echo "non alpha-numeric characters allowed:"
+      echo " - dash (-)"
+      echo " - underscore (_)"
+      echo " - dot (.)"
+      echo " ^ these cannot be first or last"
+      echo " ^ cannot be repeated (eg --)"
+			}
+			export -f _fzfPreviewWindow
+			_namePicker() {
+				local _newName="${1}"
+				local _fzfFalse="fzf --bind=enter:print-query --print-query --exact "
+				local _fzfPrompt="--prompt=TYPE-NEW-NAME> --info=hidden"
+				local _fzfColor="--color=bg:#222222,preview-bg:#333333,header:yellow"
+				local _fzfHeader="--header=existing above, guidance right >"
+				local _fzfPreview="--preview=_fzfPreviewWindow {q} {}"
+				local _fzfPreviewWin="--preview-window=right,40%,border-double,wrap"
+				local _fzfBack="--bind=backward-eof:change-prompt(YAYA-NEW-NAME>)"
+				local _fzfEsc="--bind=esc:clear-query --bind=ctrl-w:toggle-preview-wrap"
+				while true; do
+					_newSourceName=$(_getSourceList | ${_fzfFalse} ${_fzfBack} ${_fzfPreviewWin} ${_fzfEsc} ${_fzfPrompt} "${_fzfColor}" "${_fzfHeader}" "${_fzfPreview}") || { _warn "can't do that"; return; }
+      if _isSourceNameValid "${_newSourceName}"; then
+        read -r -s -n 1 -p "$(_ask "'${_newSourceName}' is valid, create? (y/n/q) ")" _ynq
+        echo
+        [[ "${_ynq:-}" = "y" ]] && break
+        [[ "${_ynq:-}" = "q" ]] && return
+        [[ "${_ynq:-}" = "n" ]] && continue
+      else
+        _error "'${_newSourceName}' is not a valid name"
+        _ask "try again? (y/n) "
+        read -r -s -n1  _yn
+        echo
+        [[ "${_yn:-}" = "y" ]] && continue
+        [[ "${_yn:-}" = "n" ]] && return
+      fi
+    done
+    eval ${__name}=${_newSourceName}
+  }
+	_namePicker _newName
+}
+
+_search() {
+	local _query="${*:-}"
+	local _rg="rg --line-number --no-heading --color=always --smart-case -g '!*.ps' --multiline --text "
+	FZF_DEFAULT_COMMAND="$_rg $(printf %q "$_query")" \
+		fzf --ansi \
+				--disabled \
+				--no-mouse \
+				--query "${_query}" \
+				--bind "change:reload:sleep 0.1; $_rg {q} || true" \
+				--delimiter : \
+				--info=inline \
+				--preview 'batcat --color=always {1} --highlight-line {2}' \
+				--preview-window 'up,60%,border-bottom,+{2}+3/3,~3' \
+				--bind "enter:execute(less {1})"
+}
+
+__search() {
+	local _query="${*:-}"
+	local _rg="rg --column --line-number --no-heading --color=always --smart-case "
+	FZF_DEFAULT_COMMAND="$_rg '$_query'" \
+		fzf --bind "change:reload:$_rg {q} || true" \
+				--ansi --disabled --query "$_query"
+}
+###############
+###### SHELL
+###############
+
+_shell() {
+	# change the command history file
+	# change the prompt dynamically
+	cd "${_studioHOME}" || { _error "can not enter studio"; return 1; }
+	HISTFILE="${_studioHOME}/.studio_history"
+	HISTSIZE=1000
+	HISTFILESIZE=10000
+	HISTTIMEFORMAT="%s %F %T "
+	HISTCONTROL=ignoreboth
+	shopt -s histappend
+	set -o history
+	local _p			#prompt
+	local _menu		#a list of all possible commands
+	# data protection level indicators
+	# RF levels are defined as follows:
+	# RF-1: buffer, editor autosave/swap areas, the dirtiest
+	# RF-2: commit status (ie is the index dirty)
+	# RF-3: plugged dsink USB device status
+	# RF-4: keychain dsink USB device status
+	# RF-5: remote repos connection status
+	# each is displayed as green, yellow, or red
+	# TODO fill out these functions to display different levels accurately
+	_getRF-1() {
+		echo "1"
+	}
+	_getRF-2() {
+		echo "${green}2${reset}"
+	}
+	_getRF-3() {
+		echo "${yellow}3${reset}"
+	}
+	_getRF-4() {
+		echo "${red}4${reset}"
+	}
+	_getRF-5() {
+		echo "5"
+	}
+	_getDsinkMedia() {
+		# print the dsink media tag in green or print 'none' in red
+		local _dsinkMediaName
+		_dsinkMediaName="${green}$(dsink status -m)${reset}" || _dsinkMediaName="${red}none${reset}"
+		echo ${_dsinkMediaName}
+	}
+	_findDsinkDisk() {
+		# check to see if a usb has been inserted and needs authenticating/mounting
+		# if _getDsinkMedia returns "none" then check for device and begin
+		# _mountDsinkDevice
+		# if deice is detected, run _mount, otherwise return 0
+		echo "not implemented"
+		}
+	_printStudioContents() {
+		# the dynamic menu
+		# list the subdirectories inside studio
+		local _cmds
+		_cmds=$(ls .)
+		echo "${_cmds}"
+		# build this out to display type/status/etc for each studio "module"
+		# use printf etc and colors
+	}
+	_interactiveCommandReader() {
+		# command line feedback
+		local _commandList
+		#shopt -s extglob
+		while true; do
+			_commandList=$(_printStudioContents)
+			_altCommands=("get" "print" "show")
+			_feed=("${_commandList}" "${_altCommands}")
+			_chosen="$(printf '%s\n' "${_feed[@]}" |
+				fzf --margin=10% --preview '
+					if $(test -d {}/.git); then
+						echo {} is a git repo
+					else
+						ls -a --color {}
+					fi
+			')"
+			# if the selection is something, return
+			# but not if nothing is selected
+			#[[ ${#_chosen} != 0 ]] || return 0
+			echo ${_chosen} && return 0
+		done
+	}
+	_displayWelcome() {
+		echo -ne "
+   ${yellow}**${cyan}STUDIO${reset}${yellow}**${reset}
+                             
+   studio: type ${green}h${reset} for guidance
+           type ${red}q${reset} to quit
+
+"
+	}
+	_termINFO() {
+		# show term columns:lines dimensions
+		# display yellow/green for too-small/ok
+		local _colMIN=100
+		local _linMIN=25
+		local columns=$(tput cols)
+		local lines=$(tput lines)
+		[ ${columns} -lt "${_colMIN}" ] && _col=${yellow}${columns}${reset} \
+			|| _col=${green}${columns}${reset}
+		[ ${lines} -lt "${_linMIN}" ] && _lin=${yellow}${lines}${reset} \
+			|| _lin=${green}${lines}${reset}
+		echo $_col:$_lin
+	}
+	# print the termwidth and color scheme (dark/light)
+	# change the color
+	# width gray less than 80, white at 80+
+	# either white on black if SCHEME is dark
+	# or black on white if SCHEME is light
+	# those come from _studioTERMWIDTH and _studioCOLORSCHEME
+	# colors should be tags...
+	_printShellUsage() {
+		echo -ne "
+  ?    show help                       === ${red}dsink${reset} ===============
+  0    print _studio ENV               m  mount      x  restore
+  l    list studio contents            u  unmount    y  compare
+  w    wordnet lookup                  f  format     z  something
+  j    johnson                         b  backup     -  status?
+  g    germ                            ==========================
+  e    epistle                         alt-B for term color setting
+  r    resume                          alt-i/alt-o for ${green}i${reset}nternet or n${red}o${reset}t
+  -    unused                          terminal dimensions: $(_termINFO)
+  n    name a new thing                ====== ${cyan}debug${reset} ================
+  s    search                          alt-X   enable bash debug
+  -    unused                          alt-x   disable bash debug
+  -    unused                          alt-D   enable studio debug
+  -    unused                          alt-d   disable studio debug
+  -    unused                          0       print ENV
+  q    quit
+
+"
+	}
+	# main shell prompt function
+	_mainPrompt() {
+	#
+	# ignore ctrl+\ ctrl+z and ctrl+c
+	trap '' SIGQUIT SIGTSTP SIGINT SIGTERM
+	# the above caused me grief...because i could not send SIGINT to dsink format
+	# allow it during dsink format (or any interactive command)
+	_p() {
+		# sets the prompt
+		# colors cannot derive from tput here...as 'read -e' becomes confused
+		reset=$'\001\e[0m\002'
+		red=$'\001\e[00;31m\002'
+		yellow=$'\001\e[00;33m\002'
+		green=$'\001\e[00;32m\002'
+		_cH=$'\001\e[00;45m\002'		#home
+		_cG=$'\001\e[00;7m\002'			#germ
+		_cU=$'\001\e[00;32m\002'		#user
+		_cS=$'\001\e[00;33m\002'		#source
+		# set i to green (ONLINE) or red (OFFLINE)
+		[ ${_studioONLINE} = "true" ] && _on=$'\001\e[00;32m\002'i$'\001\e[0m\002' || \
+			_on=$'\001\e[00;31m\002'i$'\001\e[0m\002'
+		_data="$(_getRF-1)$(_getRF-2)$(_getRF-3)$(_getRF-4)$(_getRF-5)"
+		echo -n "${_cH}${_studioNAME}${reset}:${_cU}${_studioUSER}${reset} [${_data}:$(_getDsinkMedia)] $_on > "
+	}
+	local __input
+	# simple one character interface
+	# notice we catch errors and return true instead...to stay in the loop
+	while read -rsn1 -p "$(_p)" __input || true; do
+	echo
+		case ${__input} in
+			l)
+				_interactiveCommandReader || :
+				;;
+			h|\?)
+				_printShellUsage
+				;;
+			0)
+				printenv | grep "^_studio"
+				;;
+			q)
+				exit
+				;;
+			b)
+				dsink backup || { _warn "dsink backup failed"; continue; }
+				;;
+			m)
+				dsink mount || { _warn "could not mount dsink usb"; continue; }
+				;;
+			n)
+				_name || :
+				;;
+			u)
+				dsink unmount
+				;;
+			f)
+				# temporarily allow ctrl-c (SIGINT) for 'dsink format'
+				trap - SIGINT
+				dsink format || :
+				trap '' SIGINT
+				;;
+			g)
+				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
+				clear
+				germ || { _warn "an error occurred in germ"; continue; }
+				;;
+			e)
+				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
+				clear
+				epistle
+				;;
+			r)
+				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
+				clear
+				resume
+				;;
+			s)
+				_search || :
+				;;
+			w)
+				wordnet.studio || :
+				;;
+			j)
+				johnson || :
+				;;
+			T)
+				# print terminal
+				_toggleTerminalBG || _debug "_toggleTerminalBG returned error"
+				# re-set the global
+				_isTerminalDARK && _studioDARK=true || _studioDARK=false
+				#_printTerminalBG || echo ERR
+				;;
+			$'\e')
+				# read escape keys
+				read -rsn1 -t .002 _escKey || { echo "escape key can be made useful"; continue; }
+				if [[ "$_escKey" == "[" ]]; then
+					# the trailing 'true' prevents 'read' from croaking on "alt-["
+					read -rsn1 -t .002 _escKey || true
+						case "$_escKey" in
+							"A")
+								echo "up arrow key ($_escKey) can be made useful"
+								_info "make this go up in history"
+								;;
+							"B")
+								echo "down arrow key ($_escKey) can be made useful"
+								;;
+							"C")
+								echo "right arrow key ($_escKey) can be made useful"
+								;;
+							"D")
+								echo "left arrow key ($_escKey) can be made useful"
+								;;
+							"3")
+								echo "delete key ($_escKey) can be made useful"
+								;;
+							"2")
+								echo "insert key ($_escKey) can be made useful"
+								;;
+							"F")
+								echo "end key ($_escKey) can be made useful"
+								;;
+							"H")
+								echo "home key ($_escKey) can be made useful"
+								;;
+							*)
+								echo "'$_escKey' pressed; ignoring"
+								;;
+						esac
+				else
+						# no [ means an alt key (or escape sequence?)...it works
+						case "$_escKey" in
+							"i")
+								_isOnline && _studioONLINE=true || _warn "not online"
+								;;
+							"o")
+								_studioONLINE=false
+								;;
+							"d")
+								_studioDEBUG=false
+								;;
+							"D")
+								_studioDEBUG=true
+								_debug "enabled studio debug"
+								;;
+							"X")
+								set -x
+								;;
+							"x")
+								set +x
+								;;
+							"T")
+								_debug "attempting to swap terminal fg and bg colors"
+								# toggle fg and bg term colors
+								_toggleTerminalBG || _debug "_toggleTerminalBG returned error"
+								# re-set the global
+								_isTerminalDARK && _studioDARK=true || _studioDARK=false
+								$_studioDARK && _info "dark mode enabled" || _info "light mode enabled"
+								;;
+							"B")
+								# set term color scheme
+								# consider using nameref to get the $_user scheme so that we can
+								# save it !!!!
+								echo "_user before: $_user"
+								scheme="/tmp/studio-color.$$"
+								_setTerminalBG || echo ERR
+								echo "_user after: $_user"
+								[[ -e "${scheme}" ]] && _info "scheme found" || _warn "no scheme saved"
+								[[ -e "${scheme}" ]] && cat $scheme
+								;;
+							"Q")
+								# secret emergency quit key combo
+								_warn "alt-q triggered...quitting"
+								exit 1
+								;;
+							*)
+								echo "escape sequence ($_escKey)"
+								;;
+						esac
+				fi
+				read -rsn6 -t .002 || continue
+				;;
+			$'\177')
+				echo "backspace key can be made useful"; continue
+				;;
+			$'\04')
+				echo "ctrl-d can be made useful"; continue
+				;;
+			*)
+				continue
+				;;
+		esac
+	done
+	}
+	_displayWelcome
+	_mainPrompt
+}
+
+_checkHome() {
+	if [ -d "${_notelosHOME}" ]; then
+		_info "${_notelosNAME} home found"
+	else
+		_error "no notelos home found"
+		exit 1
+	fi
+}
+
+main() {
+	# preserve the initial command
+	export _fullCommand="${@}"
+	# read the global options
+	_getOpts "${@}"
+	# read the subcommand (and its options)
+	_getSubcommand ${_subCommand}
+	# validate the environment
+	_isEnvSufficient || { _error "cannot run until these problems are resolved"; exit 1; }
+	# setup the environment after processing all command line parameters
+	_setEnv
+	# check the working directory
+	_checkHome
+	# run shell if no arguments
+	[ -z "${_subCommand:-}" ] && _shell
+	{ _warn "${_subCommand} called, but that function doesn't exist"; exit 1; }
+}
+main "${@}"
