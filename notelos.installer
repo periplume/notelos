@@ -459,10 +459,10 @@ main() {
 	_getSubcommand ${_subCommand}
 	# setup the environment after processing all command line parameters
 	_setEnv
-	#_debug "full command is '${_selfNAME} ${_fullCommand}'"
-	#_debug "sub command is '${_subCommand}'"
-	# run the desired command
-	#[ -z "${_subCommand:-}" ] && _printUsage
+	_debug "full command is '${_selfNAME} ${_fullCommand}'"
+	_debug "sub command is '${_subCommand}'"
+	# run the desired command (run help if none specified)
+	[ -z "${_subCommand:-}" ] && _printUsage
 	[ -n "${_subCommand:-}" ] && eval _"${_subCommand}" || exit
 }
 main "${@}"
