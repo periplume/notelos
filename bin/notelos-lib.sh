@@ -61,9 +61,143 @@ reset=$(tput sgr0)
 # parameters)...enable it here
 #_studioDEBUG=true
 
-# print DEBUG to console on stderr
+#TODO print DEBUG to console on stderr
+##################################################
+# LOGGING AND CONSOLE MESSAGES AND USER INTERFACE
+##################################################
 
 _fLOG() {
+	# collapsing function...sets up according to the static determinants
+	# creates all log functions dynamically (based on defaults plus positional
+	# parameters)
+	#
+	# set the notelos modes to generic names
+	_DEBUG=${_notelosDEBUG:-false}
+	_SILENT=${_notelosSILENT:-false}
+	_LOG=${_notelosLOG:-false}
+	_LOGGING=${_notelosLOGGING:-false}
+	_LOGFILE=${_notelosLOGFILE:-/dev/null}
+	# 
+	local _log=0
+	local _console=0
+	local _color=0
+	# if _SILENT is false or unset, assume interactive
+	[[ "${_SILENT:-}" = "false" ]] && _console=1
+	# if _LOG and _LOGGING is true, log
+	[[ "${_LOG:-}" = "true" && "${_LOGGING:-}" = "true" ]] && _log=1
+	# if we have color, print in color
+	#TODO remove the tput requirement here
+	[[ $(tput colors) ]] && _color=1
+	#
+	# set up colors	
+	_cDebug=$(tput setaf 6)
+	_cInfo=$(tput setaf 2)
+	_cWarn=$(tput setaf 11)
+	_cError=$(tput setaf 1)
+	_cAsk=$(tput setaf 0; tput setab 11)
+	_cReset=$(tput sgr0)
+	# create 5 log functions based on static determinants above
+	# CONSOLE AND LOG
+	if [[ $_console = 1 && $_log = 1 ]]; then
+		_debug() {
+			[[ "$_DEBUG" = "false" ]] && return
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s\n' "${_cDebug}DEBUG${_cReset}" "${@}" >&2
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cDebug}DEBUG${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_info() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cInfo}INFO${_cReset}" "${@}" >>${_LOGFILE}
+			# hack: below prints _info...multi-line messages are indented
+			SAVEIFS=$IFS
+			IFS=$'\n'
+			_pList=(${1})
+			IFS=$SAVEIFS
+			if [[ ${#_pList[@]} -gt 1 ]]; then
+				printf '%s %s\n' "${_cInfo}INFO${_cReset}" "${_pList[0]} "
+				for (( i=1; i<${#_pList[@]}; i++ ))
+				do
+					printf "\t\t: %s\n" "${_pList[$i]} "
+				done
+			else
+				printf "%s %s\n" "${_cInfo}INFO${_cReset}" "${1} "
+			fi
+		}
+		_warn() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s\n' "${_cWarn}WARN${_cReset}" "${@}"
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cWarn}WARN${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_error() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s\n' "${_cError}ERROR${_cReset}" "${@}"
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cError}ERROR${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_ask() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s' "${_cAsk}USER${_cReset}" "${@}"
+			#printf '%s %s %s\n' "$_timeStamp" "${self} ${_cAsk}USER${_cReset}" "${@}" >>${_LOGFILE}
+			# don't log prompts...if something is important, log as debug
+		}
+	# LOG ONLY
+	elif [[ $_console = 0 && $_log = 1 ]]; then
+		_debug() {
+			[[ "$_DEBUG" = "false" ]] && return
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cDebug}DEBUG${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_info() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cInfo}INFO${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_warn() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cWarn}WARN${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_error() {
+			local _timeStamp=$(date +%s.%N)
+			printf '%s %s %s\n' "$_timeStamp" "${self} ${_cError}ERROR${_cReset}" "${@}" >>${_LOGFILE}
+		}
+		_ask() {
+			:
+			#local _timeStamp=$(date +%s.%N)
+			#printf '%s %s %s\n' "$_timeStamp" "${self} ${_cAsk}USER${_cReset}" "${@}" >>${_studioLOGFILE}
+			# don't log _ask prompts
+		}
+	# CONSOLE ONLY
+	elif [[ $_console = 1 && $_log = 0 ]]; then
+		_debug() {
+			[[ "$_DEBUG" = "false" ]] && return
+			printf '%s %s\n' "${_cDebug}DEBUG${_cReset}" "${@}" >&2 
+		}
+		_info() {
+			printf '%s %s\n' "${_cInfo}INFO${_cReset}" "${@}"
+		}
+		_warn() {
+			printf '%s %s\n' "${_cWarn}WARN${_cReset}" "${@}"
+		}
+		_error() {
+			printf '%s %s\n' "${_cError}ERROR${_cReset}" "${@}"
+		}
+		_ask() {
+			printf '%s %s' "${_cAsk}USER${_cReset}" "${@}"
+		}
+	else
+		# do nothing
+		_debug() { : ; }
+		_info() { : ; }
+		_warn() { : ; }
+		_error() { : ; }
+		_ask() { : ; }
+	fi
+	export -f _debug
+	export -f _info
+	export -f _warn
+	export -f _error
+	export -f _ask
+}
+
+_XfLOG() {
 	# collapsing function...sets up according to the static determinants
 	# creates all log functions dynamically (based on defaults plus positional
 	# parameters)

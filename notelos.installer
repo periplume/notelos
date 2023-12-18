@@ -342,7 +342,7 @@ _install() {
 	mkdir "${_notelosHOME}/.code"			# make this the lab and integrate dev (future)
 	mkdir "${_notelosHOME}/.state"		# state files
 	mkdir "${_notelosHOME}/.log"			# log files
-	mkdir "${_notelosHOME}/.mount"		# dsink mount
+	mkdir "${_notelosHOME}/.dsink"		# dsink state and mount
 	mkdir "${_notelosHOME}/.hints"		# hint files
 	mkdir "${_notelosHOME}/.bin"			# alt working executables (default is still $HOME/bin)
 	# now make bin if it's not there
@@ -368,9 +368,8 @@ _install() {
 	# update the git ignore file
 	echo ".code" >> "${_notelosHOME}/.gitignore" 
 	echo ".bin" >> "${_notelosHOME}/.gitignore" 
-	echo ".state" >> "${_notelosHOME}/.gitignore" 
-	echo ".mount" >> "${_notelosHOME}/.gitignore" 
 	echo ".log" >> "${_notelosHOME}/.gitignore"
+	echo ".dsink/mount" >> "${_notelosHOME}/.gitignore" 
 	# add gitignore and components to be tracked in git
 	git -C "${_notelosHOME}" add "${_notelosHOME}/.gitignore"
 	git -C "${_notelosHOME}" add "${_notelosHOME}/.config/*"
