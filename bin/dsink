@@ -27,7 +27,7 @@ _CONFIG="${_HOME}/dsink.conf"
 _LOGFILE="${_BASE}/.log/dsink.log"
 _CATALOG="${_HOME}/catalog"
 _MEDIA="${_CATALOG}/media"
-_MOUNT="${_HOME}/.mount"
+_MOUNT="${_HOME}/mount"
 
 ######################################
 # LIBRARY SOURCES
@@ -223,6 +223,9 @@ _setEnv() {
 _checkHome () {
 	if [ -d "${_HOME}" ]; then
 		_info "'${_HOME}' found"
+		[ -d "${_MOUNT}" ] || mkdir "${_MOUNT}"
+		[ -d "${_CATALOG}" ] || mkdir "${_CATALOG}"
+		[ -d "${_MEDIA}" ] || mkdir "${_MEDIA}"
 	else
 		_error "'${_HOME}' not found"
 		exit 1
