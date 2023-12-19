@@ -1,0 +1,643 @@
+#!/usr/bin/env bash
+# file: dsink
+# source: https://github.com/periplume/notelos.git
+# author: jason@bloom.us
+# desc: media management and backup
+
+# SCRIPT AND SHELL SETTINGS (strict mode)
+set -o errexit
+set -o nounset
+set -o pipefail
+IFS=$'\n\t'
+
+# prevent this file from being sourced
+(return 0 2>/dev/null) && { echo "dsink cannot be sourced"; return; }
+
+#####################
+# ENVIRONMENT
+#####################
+
+_NAME=.dsink
+# inherit the _notelosHOME as the BASE, otherwise use $HOME
+_BASE=${_notelosHOME:-$HOME}
+_HOME="${_BASE}/${_NAME}"
+_CONFIG="${_HOME}/dsink.conf"
+_LOGFILE="${_BASE}/.log/dsink.log"
+_CATALOG="${_HOME}/catalog"
+_MEDIA="${_CATALOG}/media"
+_MOUNT="${_HOME}/.mount"
+
+######################################
+# LIBRARY SOURCES
+######################################
+
+# source the library functions
+# use the library file from the same directory if possible
+# otherwise use the regular search through path method
+[[ -e "$(dirname $0)/notelos-lib.sh" ]] \
+  && source "$(dirname $0)/notelos-lib.sh" \
+  || source notelos-lib.sh
+#TODO this could use some tightened logic
+
+# REQUIRED EXTERNAL COMMANDS
+_requiredCommands=(rsync cryptsetup lsblk parted wipefs inotifywait)
+
+###########################
+# LOGGING AND CONSOLE
+###########################
+
+_fLOG
+# the log/console functions instantited now will be re-initialized after all the
+# command line parameters are processed (if run within notelos)
+
+###########################
+# HELPER FUNCTIONS
+###########################
+
+_printUsage () {
+  cat << EOF
+usage: dsink [OPTIONS] command [OPTIONS]
+
+options:
+ -h      print this usage info
+ -l      log commands and debug info to log file
+ -d      print debug info to stderr and/or log file
+ -s      suppress all stdout/stderr
+ -v      print version number and exit
+
+EOF
+_printCommands
+}
+
+_printCommands() {
+		cat << EOF
+ backup              synchronize defined local contents to mounted usb
+ restore             reverse synchronize from usb to local device
+ format              format a new usb portable device
+ mount               open and mount usb device
+ unmount             unmount and close usb device
+ status              report on replication level status
+EOF
+}
+
+_printInfo () {
+  cat << EOF
+
+dsink maintains data replication of local data onto removable
+usb devices which it encrypts (with luks).
+
+EOF
+}
+
+#################################
+# PARAMETER PROCESSING
+#################################
+
+_getOpts () {
+	# check for global command flags and set things accordingly
+	local OPTIND
+	while getopts ":hsdlv" flag; do
+		case ${flag} in 
+			h)
+				_printInfo ; _printUsage; exit 0
+				;;
+ 	    s)
+ 	      _SILENT=true
+				;;
+			d)
+				_DEBUG=true
+				;;
+			l)
+				_LOG=true
+				;;
+			v)
+				_info "version: beta"; exit 0
+				;;
+			?)
+				_error "invalid global option: '-$OPTARG'"; exit 1
+				;;
+		esac
+	done
+	shift $((OPTIND - 1)); OPTIND=1
+	export _subCommandParams="${@}"
+	# next look for the subcommand and check for its options
+	while ((${#})); do
+		case $1 in
+			help)
+				_printInfo ; _printUsage; exit 0
+				;;
+			backup)
+				_subCommand=$1; shift
+				while getopts ":r" flag; do
+					case ${flag} in
+						r)
+							# future option to use when we want to do an rsync force refresh, eg
+							_refresh=true
+							_info "${FUNCNAME[0]}: refresh mode enabled"
+							;;
+						?)
+							_error "${FUNCNAME[0]}: unknown flag -$OPTARG"; exit 1
+							;;
+					esac
+				done
+				shift $((OPTIND - 1))
+				;;
+			restore)
+				_debug "${FUNCNAME[0]}: '$1' called, check for restore flags"
+				_subCommand=$1
+				return
+				;;
+			format)
+				_subCommand=$1; shift
+				while getopts ":fd:" flag; do
+					case ${flag} in
+						f)
+							_forceFormat=true
+							_info "${FUNCNAME[0]}: force mode enabled"
+							;;
+						?)
+							_error "${FUNCNAME[0]}: unknown flag -$OPTARG"; exit 1
+						;;
+					esac
+				done
+				shift $((OPTIND - 1))
+				;;
+			mount)
+				_subCommand=$1
+				return
+				;;
+			unmount)
+				_subCommand=$1
+				return
+				;;
+			status)
+				_subCommand=$1; shift
+				while getopts ":m" flag; do
+					case ${flag} in
+						m)
+							_checkMount && _getMountedName || return 1
+							exit 0
+							;;
+						?)
+							_error "${FUNCNAME[0]}: unknown flag -$OPTARG"; exit 1
+							;;
+						esac
+					done
+				shift $((OPTIND - 1))
+				;;
+			*)
+				_error "$BASH_SOURCE ${FUNCNAME[0]}: '$1' is not a subcommand"
+				exit 1
+				;;
+		esac
+		shift
+	done
+}
+
+##################################
+# SET THE ENVIRONMENT
+##################################
+
+_setEnv() {
+	# get the name and absolute path of the calling script
+  _selfNAME=$(basename "${BASH_SOURCE[0]}")
+  _selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
+  _selfBASE=$(dirname "${_selfABSOLUTE}")
+  _selfCALL=${0}
+  _selfPWD=$(pwd)
+	_debug "$(declare -p _NAME)"
+	_debug "$(declare -p _BASE)"
+	_debug "$(declare -p _HOME)"
+	_debug "$(declare -p _CONFIG)"
+	_debug "$(declare -p _LOGFILE)"
+	_debug "$(declare -p _CATALOG)"
+	_debug "$(declare -p _MEDIA)"
+	_debug "$(declare -p _MOUNT)"
+}
+
+_checkHome () {
+	if [ -d "${_HOME}" ]; then
+		_info "'${_HOME}' found"
+	else
+		_error "'${_HOME}' not found"
+		exit 1
+	fi
+}
+
+_checkExternalTools() {
+	# check for required tools, report accordingly
+	local _sufficient=true
+	for _required in "${_requiredCommands}"; do
+		if ! hash "${_required}" 2>/dev/null; then
+			_error "${FUNCNAME[0]}: ${_required} not found"
+			_sufficient=false
+		fi
+	done
+	[ ${_sufficient} = true ] && return 0 || return 1
+}
+
+_backup() {
+	# rsync from local source to mounted usb destination
+	_checkMount || { _warn "dsink usb device not mounted"; return 1; }
+	_rsyncDest="${_MOUNT}"/rsync/
+	rsync -a ${_notelosHOME} "${_rsyncDest}"
+	_info "backup from ${_notelosHOME} to ${_rsyncDest} complete"
+}
+
+_format() {
+	# catch premature exits
+	trap _irishExit SIGINT
+	_checkMount && { _error "device already mounted"; return 1; }
+	_findNewDisk || { _error "no new disk found"; return; }
+  _info "found ${_newDiskDevice}"
+	_printDiskInfo "${_newDiskDevice}"
+	_ask "is ${green}${_newDiskDevice}${reset} the desired disk? [type YES to proceed] "
+	# better to run a timer...
+	read -r -s -t 15 -n 3 _YES ; echo
+	if [[ "${_YES}" != "YES" ]]; then
+		_error "uppercase YES is required, try again"
+		return
+	fi
+	local _newDsinkDisk="${_newDiskDevice}"
+	local _newDsinkDiskPartition="${_newDsinkDisk}1"
+	_doWritePartition "${_newDsinkDisk}" || { _error "failed to write partition on ${1}"; return; }
+	_ptuuid=$(_getPTUUID ${_newDsinkDisk}) || { _error "could not get disk id"; return; }
+	if [ -d "${_CATALOG}"/media/"${_ptuuid:0:3}" ]; then
+		# disk id already exists
+		_error "disk id ${_ptuuid:0:3} collided"
+		while [ -d "${_CATALOG}"/media/"${_ptuuid:0:3}" ]; do
+			_doWritePartition "${_newDsinkDisk}" _error "failed to rewrite partition with unique id on ${1}"
+		done
+	fi
+	_debug "$BASH_SOURCE ${FUNCNAME[0]}: ptuuid=${_ptuuid}"
+	_debug "$BASH_SOURCE ${FUNCNAME[0]}: disk id is ${_ptuuid:0:3}"
+	mkdir "${_dsinkCatalog}"/media/"${_ptuuid:0:3}"
+	touch "${_dsinkCatalog}"/media/"${_ptuuid:0:3}"/"${_ptuuid:3}"
+	_isDeviceReady "${_newDsinkDisk}" || _error "${_newDsinkDevice} not ready"
+	_isDeviceReady "${_newDsinkDisk}"1 || _error "${_newDsinkDisk}1 not ready"
+	_info "encrypting ${_newDsinkDisk}1 now..."
+	_doEncrypt "${_newDsinkDisk}"1 && touch "${_CATALOG}"/media/"${_ptuuid:0:3}"/encrypted \
+		|| { _error "_doEncrypt ${_newDsinkDisk} failed"; return 1; }
+	_info "writing filesystem now..."
+	_doMakeFS && touch "${_CATALOG}"/media/"${_ptuuid:0:3}"/ready
+	_mount && touch "${_CATALOG}"/media/"${_ptuuid:0:3}"/mounted
+	_info "dsink device is ready and mounted"
+	_info "label new dsink device as ${label}${_ptuuid:0:3}${reset} now"
+}
+
+# disk media catalog
+# 1. DIR disk id: $_ptuuid:0:3
+# 2. TOUCH remaining ptuuid
+# 3. file size to contain disk size
+# other attributes
+# nickname
+# status (in-use, lost, corrupted, destroyed)
+
+_doMakeFS() {
+	# no args...always write to the mapper device
+	until ls /dev/mapper/dsink &>/dev/null; do
+		echo -n "waiting on /dev/mapper/dsink"
+		sleep 0.1
+	done
+	sudo mkfs.ext4 -q /dev/mapper/dsink -L dsink
+}
+
+_doEncrypt() {
+	# arg 1 = partition (eg /dev/sda1)
+	# encrypt the device with luks, then open the device
+	sudo cryptsetup luksFormat --verify-passphrase --batch-mode ${1} || \
+		{ _error "cryptsetup (_doEncrypt) failed."; return 1; }
+	_info "${1} encrypted, opening the device..."
+	sudo cryptsetup luksOpen ${1} dsink
+}
+
+_doWritePartition() {
+	# arg 1 = /dev/sda
+	# 
+	_isBlockDevice ${1} || _error "${1} is not a block device"
+	_isDeviceWritable ${1} || _error "${1} is not ready"
+	sudo wipefs --all ${1} &>/dev/null || _error "failed to wipefs ${1}"
+	sudo parted -s ${1} mklabel gpt
+	sudo parted -s ${1} mkpart dsink 1 100%
+	_getPTUUID ${1} &>/dev/null || return 1
+}
+
+_status() {
+	_checkMount && _getMountedName || { _info "nothing mounted"; return; }
+}
+
+_isBlockDevice() {
+	# arg1 = disk device to check (eg /dev/sda)
+	# return 0 if true, 1 if false
+	until [ -b ${1:-null} ]; do
+		sleep 0.1
+		echo "waiting on block device ${1}"
+	done
+}
+#TODO these two functions need timers!
+_isDeviceReady() {
+	# a little hacky way of waiting on the disk before probing
+	# arg1 = disk device to check (eg /dev/sda)
+	# checks for group=disk (which seems to be necessary)
+	# NOTE: this function will hang indefinitely if the device never appears
+	# it also relies on the /sys filesystem
+	_isBlockDevice $1 || return 1
+	until [ $(stat -c "%G" ${1}) = "disk" ]; do
+		sleep 0.1
+	done
+	_isDeviceWritable $1 || { _error "device $1 not writable"; return 1; }
+	return 0
+}
+
+_isDeviceWritable() {
+	if stat -c "%a" $1 | grep ".[67.]" &>/dev/null; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+_getPTUUID() {
+	# ARG1 = sd device (eg /dev/sda)
+	# the PTUUID is cataloged into dsink.disks at the time of format
+	# return 1 if no device or not block
+	# return 2 if no PTUUID found
+	# echo the whole disk partition table UUID if found
+	#local _rawDevice=${1}
+	#_isBlockDevice $_rawDevice || return 1
+	local _PTUUID=$(lsblk -Sn -oPTUUID ${1} 2>/dev/null)
+	if [ -z "$_PTUUID" ]; then
+		return 1
+	else
+		echo "$_PTUUID"
+	fi
+}
+
+_isDiskDsink() {
+	# arg 1 = disk device (/dev/sda)
+	# if PTTYPE = gpt
+	# if partition 1 PARTLABEL = dsink
+	# return 0 if true, 1 if disk is not a dsink device (must have 1 part labeled
+	# dsink)
+	if [[ $(lsblk -nS -oPTTYPE ${1}) == "gpt" ]]; then
+		if _getPartitionList ${1} &>/dev/null; then
+			if [[ $(lsblk -n -oPARTLABEL ${1}1) == "dsink" ]]; then
+				return 0
+			fi
+		fi
+	fi
+	return 1
+}
+
+_findMounts() {
+	# arg 1 is the device (eg /dev/sdc)
+	# get the list of partitions on the device
+	_devicePartitionList=$(_getPartitionList ${1}) || return 1
+	for device in "${_devicePartitionList[@]}"; do
+		df -P | awk -v device="${device}" '$1 == device {print $6}'
+	done
+}
+
+_waitForMounts() {
+	# arg 1 = disk name (eg sda)
+	# find the partitions of a disk
+	_devicePartitionList=$(ls /sys/block/${1}/*/partition | cut -f5 -d/ | tr '\n' ' ')
+	_t=5000
+	for part in ${_devicePartitionList}; do
+		findmnt --poll=mount --first-only --timeout=$_t /dev/$part &>/dev/null &
+	done
+	wait
+}
+
+_printMountInfo() {
+	# job: discover and print filesystem details of specified whole disk
+	# filesystem, mount state, and if empty
+	# arg 1 = whole disk device file (eg /dev/sda)
+	_partList=$(_getPartitionList "${1}") || _error "no partitions"
+	_info "partitions on ${_dev}: ${_partList}"
+}
+
+_getPartitionList() {
+	# for a given disk, discover how many partitions
+	# return the list (eg 'sda1 sda2')
+	# return 1 if none or error
+	# arg 1 = whole disk device file
+	_x=$(lsblk -n -l "${1}" | tail -n +2 | cut -f1 -d' ' | tr '\n' ' ')
+	if [ -z "${_x}" ]; then
+		return 1
+	else
+		echo "${_x}"
+	fi
+}
+
+_printDiskInfo() {
+	# arg1 = whole disk device file (ie /dev/sda)
+	# get device info and print it in human readable form
+	_dev=${1##*/}
+	_isDeviceReady $1 || _error "$1 is not ready"
+	_isDeviceWritable $1 || _error "$1 is not writable"
+	udevadm settle
+	echo -e "\n==============PHYSICAL:========================================"
+	lsblk -S -oNAME,SIZE,VENDOR,PTTYPE,PTUUID ${1}
+	echo -e "\n==============LOGICAL:========================================="
+	if _getPartitionList ${1} &>/dev/null; then
+		lsblk -oNAME,SIZE,PARTLABEL,FSTYPE,UUID ${1}
+	else
+		echo -e "\n NO PARTITIONS ON DISK"
+		# TODO this is broken...when a key has a partition table but no partitions
+		# it croaks
+	fi
+	echo -e "\n==============STATE:==========================================="
+	# check for dsink signature
+	if _isDiskDsink "${1}"; then
+		_checkMount && _error "dsink mounted...${1}...i think"
+		if _PTUUID=$(_getPTUUID ${1}); then
+			_warn "${1} is a dsink disk: ${_PTUUID}"
+			if [ -d "${_CATALOG}"/media/"${_PTUUID:0:3}" ]; then
+				_error "disk id ${label}${_PTUUID:0:3}${reset} already exists in the media catalog!!"
+			fi
+			return 0
+		else
+			_warn "${1} looks like a dsink disk, but has no PTUUID"
+			echo "require some override here"
+			return 1
+		fi
+	else
+		# disk is not a dsink device
+		if ! _getPartitionList ${1} &>/dev/null; then
+			_warn "disk is without partitions"
+			return 0
+		fi
+	fi
+	# print mounted devices (just in case)
+	_findMounts "${1}"
+}
+	
+_irishExit() {
+	echo -ne "\r${yellow}WARNING${reset}: to retry, press R, to quit, press ENTER\n"
+	read -s -t 15 -n 1 _ANS
+	if [[ ${_ANS:-n} = 'R' ]]; then
+		return
+	else
+		_warn "user requested exit with ctrl-c"
+		exit 0
+	fi
+}
+
+_findNewDisk() {
+	# job: look at devices before, prompt user to insert new disk, identify the
+	# newly inserted disk, then set the name of the device (eg /dev/sda) as a
+	# global VAR=/dev/sda
+	# return 1 if no new disks found
+	# no args taken
+	# naturally interactive...requires user engagement
+	# NOTE: _SILENT=true must be ignored for this function...need to resolve this,
+	# although it still works in silent mode since no user key input is required
+	# NOTE: because this is interactive, we cannot pass the value back with echo
+	# AND interact with the user since it would require a subshell...which waits
+	# on the command (function) to complete before the output is set...ie, we need
+	# to use a global VAR to pass the one result (the device file name) back.
+	# the method is not ironclad...but it works by watching the /sys/block
+	# namespace for changes.
+	local _usbDisksBefore=($(ls /sys/block))
+	local _countBefore=${#_usbDisksBefore[@]}
+	local _usbDisksAfter
+	local _countAfter
+	local _newInsertedUsbDisk
+	local _detectedNewDisk
+	declare -g _newDiskDevice
+	local _attempts=3
+	local _namedPipe=/tmp/udev.pipe
+	_info "insert usb drive now...hit ${label}CTRL-C${reset} to abort"
+	_debug "initial number of devices: ${_countBefore}"
+	_info "waiting for new device..."
+	# using udevadm, wait until we see a match (meaning a new device is detected),
+	# assign that to a var, and stop the whole pipeline of monitor data
+	# we use coproc here to easily stop the 'udevadm monitor' process
+	coproc UDEV { udevadm monitor --subsystem-match=block --property --kernel; }
+	_debug "coproc for udev is $UDEV_PID"
+	_killUDEV() { _debug "killing udev ($UDEV_PID)"; kill $UDEV_PID; }
+	trap _killUDEV SIGINT
+	while read -r line; do
+		if [[ "$line" == DEVNAME=* ]]; then
+			_debug "found ${green}line${reset}: $line"
+     	_detectedNewDisk=${line#*=}
+     	break
+		fi
+	done <&${UDEV[0]}
+	# kill the udev if it's still running
+	[ -z "${UDEV_PID:-}" ] || kill $UDEV_PID
+	trap - SIGINT
+	_usbDisksAfter=($(ls /sys/block))
+	_countAfter=${#_usbDisksAfter[@]}
+	if [[ ${_countAfter} -gt ${_countBefore} ]]; then
+		_info "found a new device '${_detectedNewDisk}'"
+	elif [[ ${_countAfter} -lt ${_countBefore} ]]; then
+		_error "device disappeared...try again"
+		return 1
+	fi
+	# if nothing changed, no new devices were detected
+	[[ ${_countBefore} == ${_countAfter} ]] && { _warn "found nothing"; return 1; }
+	#_debug "$BASH_SOURCE ${FUNCNAME[0]}: block devices before: [${#_usbDisksBefore[@]}] '${_usbDisksBefore[@]}'" 
+	#_debug "$BASH_SOURCE ${FUNCNAME[0]}: block devices after: [${#_usbDisksAfter[@]}] '${_usbDisksAfter[@]}'" 
+	# determine the new device by comparing before and after lists
+	for i in "${_usbDisksAfter[@]}"; do
+		skip=
+		for x in "${_usbDisksBefore[@]}"; do
+			[[ $i == $x ]] && { skip=1; break; }
+		done
+			[[ -n $skip ]] || _newInsertedUsbDisk=$i
+	done
+	if [[ "${_newInsertedUsbDisk}" == ${_detectedNewDisk##*/} ]]; then
+		_info "confirmed new device is '${_detectedNewDisk}'"
+		_newDiskDevice=${_detectedNewDisk}
+	else
+		_warn "not consistent"
+		return 1
+	fi
+}
+
+_unmount() {
+	# unmount fs, close luks device, notify device can be removed
+	# must be interactive to allow sudo command
+	# check for mount first
+	_checkMount || { _error "no dsink device mounted"; return; }
+	_media=$(_getMountedName) && _info "found mounted device ${_media}"
+	sudo umount "${_MOUNT}" && rm "${_CATALOG}/media/${_media}/mounted" || { _error "unmount failure"; return; }
+	sudo cryptsetup luksClose dsink || _error "${FUNCNAME[0]}: luksClose failed with err $?"
+	_info "OK to remove usb device now"
+}	
+
+_mount() {
+	# prompt use to insert dsink usb, open luks dsink, mount fs
+	# check for mount first
+	_detectedDsinkDevice=
+	_checkMount && { _error "dsink device already mounted"; return 1; }
+	if [ -e /dev/disk/by-partlabel/dsink ]; then
+		_info "dsink partition detected"
+		_detectedDsinkDevice=$(readlink -f /dev/disk/by-partlabel/dsink)
+	else
+		echo "no dsink partition available"
+	fi
+	if [ -n "${_detectedDsinkDevice}" ]; then
+		if [ ! -e /dev/mapper/dsink ]; then
+			sudo cryptsetup luksOpen ${_detectedDsinkDevice} dsink
+		fi
+		sudo mount /dev/mapper/dsink "${_MOUNT}"
+		sudo chown -R jason:jason "${_MOUNT}"
+		_deviceID=${_detectedDsinkDevice::-1}
+		_media=$(_getPTUUID ${_deviceID})
+		touch "${_CATALOG}/media/${_media:0:3}/mounted"
+	else
+		echo "insert a dsink device and try again"
+	fi
+	# TODO this function needs reworking...
+}
+
+_checkMapperFile() {
+	if [ -e /dev/mapper/dsink ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+_findUnmountedDsink() {
+	# search for a dsink device
+	echo DO
+}
+
+_checkMount() {
+	# check for mounted dsink device
+	# return 0 for true, 1 for false
+	if grep -qs "${_MOUNT}" /proc/mounts; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+_getMountedName() {
+	_mounted=$(find ${_MEDIA}/*/mounted -type f)
+	_a=${_mounted%*/mounted}
+	_media=${_a##*/}
+	echo ${_media}
+}
+
+main() {
+	# preserve the initial positional parameters
+	export _fullCommand="${@}"
+	# read all the positional parameters
+ 	_getOpts "${@}"
+  # setup the environment after processing all command line parameters
+	_setEnv
+	# validate the environment
+	_checkExternalTools || { _error "cannot run without these external tools"; exit 1; }
+	# check for the working directory
+	_checkHome
+  # if run without arguments, run and print _status
+	[ -z "${_subCommand:-}" ] && _status
+	# otherwise run the subcommand
+	[ -n "${_subCommand:-}" ] && eval _"${_subCommand}"
+}
+main "${@}"
