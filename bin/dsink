@@ -16,7 +16,9 @@ IFS=$'\n\t'
 #####################
 # ENVIRONMENT
 #####################
-
+# temp fix to allow for easier troubleshooting standalone...yes...it needs a
+# standalone mode!
+_notelosHOME=${notelosHOME:-$HOME/notelos}
 _NAME=.dsink
 # inherit the _notelosHOME as the BASE, otherwise use $HOME
 _BASE=${_notelosHOME:-$HOME}
@@ -141,6 +143,7 @@ _getOpts () {
 					esac
 				done
 				shift $((OPTIND - 1))
+				return
 				;;
 			restore)
 				_debug "${FUNCNAME[0]}: '$1' called, check for restore flags"
@@ -161,6 +164,7 @@ _getOpts () {
 					esac
 				done
 				shift $((OPTIND - 1))
+				return
 				;;
 			mount)
 				_subCommand=$1
@@ -184,6 +188,7 @@ _getOpts () {
 						esac
 					done
 				shift $((OPTIND - 1))
+				return
 				;;
 			*)
 				_error "$BASH_SOURCE ${FUNCNAME[0]}: '$1' is not a subcommand"
@@ -271,8 +276,8 @@ _format() {
 	fi
 	_debug "$BASH_SOURCE ${FUNCNAME[0]}: ptuuid=${_ptuuid}"
 	_debug "$BASH_SOURCE ${FUNCNAME[0]}: disk id is ${_ptuuid:0:3}"
-	mkdir "${_dsinkCatalog}"/media/"${_ptuuid:0:3}"
-	touch "${_dsinkCatalog}"/media/"${_ptuuid:0:3}"/"${_ptuuid:3}"
+	mkdir "${_CATALOG}"/media/"${_ptuuid:0:3}"
+	touch "${_CATALOG}"/media/"${_ptuuid:0:3}"/"${_ptuuid:3}"
 	_isDeviceReady "${_newDsinkDisk}" || _error "${_newDsinkDevice} not ready"
 	_isDeviceReady "${_newDsinkDisk}"1 || _error "${_newDsinkDisk}1 not ready"
 	_info "encrypting ${_newDsinkDisk}1 now..."
@@ -637,7 +642,7 @@ main() {
 	_checkHome
   # if run without arguments, run and print _status
 	[ -z "${_subCommand:-}" ] && _status
-	# otherwise run the subcommand
+	# otherwise execute the subcommand function
 	[ -n "${_subCommand:-}" ] && eval _"${_subCommand}"
 }
 main "${@}"
