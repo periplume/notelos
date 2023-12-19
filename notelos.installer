@@ -8,6 +8,7 @@
 set -o errexit
 set -o nounset
 set -o pipefail
+IFS=$'\n\t'
 
 ####################################
 # PREREQUISITES
@@ -41,12 +42,11 @@ commands:
  upgrade                upgrade notelos
 
 install options
- install -b          use \$_notelosHOME/.bin
-                       (default is $HOME/bin, ie \$_notelosBASE/bin)
+ install -b             put executables in \$HOME/bin
 
 upgrade options
- upgrade -s <file>   specify specific file
- upgrade -f          replaces existing files (without confirmation!)
+ upgrade -s <file>      specify specific file
+ upgrade -f             replaces existing files (without confirmation!)
 EOF
 }
 
@@ -55,28 +55,24 @@ EOF
 ####################################
 
 _ask() {
-	printf "\033[38;5;0;48;5;11mUSER:\033[0m %s" "$1"
+	printf "\033[38;5;0;48;5;11mUSER\033[0m %s" "$1"
 }
 _info() {
-	printf "\033[38;5;2mINFO:\033[0m %s\n" "$1"
+	printf "\033[38;5;2mINFO\033[0m %s\n" "$1"
 }
 _warn() {
-	printf "\033[38;5;11mWARN:\033[0m %s\n" "$1"
+	printf "\033[38;5;11mWARN\033[0m %s\n" "$1"
 }
 _error() {
-	printf "\033[38;5;9mERROR:\033[0m %s\n" "$1"
+	printf "\033[38;5;9mERROR\033[0m %s\n" "$1"
 }
 _debug() {
-	printf "\033[38;5;6mDEBUG:\033[0m %s\n" "$1"
+	printf "\033[38;5;6mDEBUG\033[0m %s\n" "$1"
 }
 
 ####################################
 # TEXT COLOR FORMATTING
 ####################################
-
-# things we will format
-# path
-
 
 _fmt() {
 	# arg 1 = the kind of thing
@@ -84,13 +80,13 @@ _fmt() {
 	[[ $1 = "path" ]] && printf "\033[38;5;3m%s\033[0m\n" "$2"
 }
 
-
 ####################################
-# PARAMETER PROCESSING FUNCTIONS
+# PARAMETER PROCESSING
 ####################################
 
 _getOpts () {
-	# check for global command flags and set things accordingly
+	# read all the positional parameters and set things accordingly
+	# first look for the global option flags and option arguments
 	local OPTIND
 	while getopts ":hdDn:p:" flag; do
 		case ${flag} in 
@@ -98,20 +94,25 @@ _getOpts () {
 				_printUsage; exit 0
 				;;
 			n)
-				_warn "setting _altNAME to '${OPTARG}'"
+				# don't allow flags to be arguments to flags
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+				_warn "setting notelos name to '${OPTARG}'"
 				_altNAME=${OPTARG}
-				_justDo=true
+				#_justDo=true
 				;;
 			p)
-				_warn "setting _altBASE to '${OPTARG}'"
+				# don't allow flags to be arguments to flags
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+				_warn "setting notelos base dir to '${OPTARG}'"
 				_altBASE=${OPTARG}
-				_justDo=true
+				#_justDo=true
 				;;
 			d)
-				# do not query the user
+				# do not query the user, just do it
 				_justDo=true
 				;;
 			D)
+				_warn "developer mode true"
 				# developer mode (future feature)
 				_developerMode=true
 				;;
@@ -120,92 +121,72 @@ _getOpts () {
 				;;
 		esac
 	done
-	shift $((OPTIND - 1))
-	# $_subCommand is used to process the subcommand options below
-	export _subCommand="${@}"
-}
-
-_getSubcommand() {
-	# look for the first subcommand in the _subCommand string and act accordingly
+	# shift and reset the getopts index before processing subcommand
+	shift $((OPTIND - 1)); OPTIND=1
+	# preserve the full subcommand with its parameters
+	export _subCommandParams="${@}"
+	# next look for the subcommand and check for its options
 	while ((${#})); do
-		case $1 in
+		case ${1} in
 			help)
 				_printUsage; exit 0
 				;;
 			install)
-				_getInstallOpts
-				return
+				_subCommand=$1; shift
+				while getopts ":b" flag; do
+					case ${flag} in
+						b)
+							# store the notelos suite of scripts in $HOME/bin
+							_binIntegral=false
+							_warn "using '\$HOME/bin' for executables"
+							;;	
+						\?)
+				 			_error "${FUNCNAME[0]}: unknown flag '-${OPTARG}'"; exit 1
+							;;
+						:)
+							_error "${FUNCNAME[0]}: arg required for '-${OPTARG}'"; exit 1
+						;;
+					esac
+				done
+				shift $((OPTIND - 1))
 				;;
 			upgrade)
-				_warn "upgrade function not yet implemented"
-				exit 1
+				_subCommand=$1; shift
+				while getopts ":fs:" flag; do
+					case ${flag} in
+						s)
+							# don't allow flags to be arguments to flags
+							[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+							# only do the "specific" file designated
+							_specificFile="${OPTARG}"
+							_info "installing specific file '${_specificFile}'"
+							;;
+						f)
+							# force...ie replace what's there...always dangerous
+							_forceInstall=true
+							_warn "performing an unsafe 'force' install"
+							;;
+						\?)
+				 			_error "${FUNCNAME[0]}: unknown flag '-${OPTARG}'"; exit 1
+							;;
+						:)
+							_error "${FUNCNAME[0]}: arg required for '-${OPTARG}'"; exit 1
+							;;
+					esac
+				done
+				shift $((OPTIND - 1))
 				;;
 			*)
 				_error "'${1}' is not a subcommand"
 				return 1
 				;;
 		esac
-		shift
 	done
 }
 
-#################################
-# SUBCOMMAND OPTION PROCESSING
-#################################
-
-_getInstallOpts() {
-	# use the _subCommand string (set in _getOpts)
-	set -- ${_subCommand}
-	# ignore the subcommand itself
-	shift
-	while getopts ":b" flag; do
-		case ${flag} in
-			b)
-				# store the notelos suite of scripts in _notelosHOME/.bin
-				_binIntegral=true
-				_warn "using '\$_notelosHOME/.bin' for executables"
-				;;	
-			\?)
-				 _error "${FUNCNAME[0]}: unknown flag '-$OPTARG'"; exit 1
-				;;
-			:)
-				_error "${FUNCNAME[0]}: arg required for '${flag}'"; exit 1
-				;;
-		esac
-	done
-	shift $((OPTIND - 1))
-}
-
-_getUpgradeOpts() {
-	# use the _subCommand string (set in _getOpts)
-	set -- ${_subCommand}
-	# ignore the subcommand itself
-	shift
-	while getopts ":fs:" flag; do
-		case ${flag} in
-			s)
-				# don't allow flags to be arguments to flags
-				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
-				# only do the "specific" file designated
-				[[ -z "${OPTARG}" ]] && { _error "-s requires an argument (file name)"; exit 1; }
-				_specificFile="${OPTARG}"
-				_warn "installing specific file '${_specificFile}'"
-				;;
-			f)
-				# force...ie replace what's there...always dangerous
-				_forceInstall=true
-				_warn "performing an unsafe 'force' install"
-				;;
-			\?)
-				 _error "${FUNCNAME[0]}: unknown flag '-$OPTARG'"; exit 1
-				;;
-			:)
-				_error "${FUNCNAME[0]}: arg required for '${flag}'"; exit 1
-				;;
-		esac
-	done
-	shift $((OPTIND - 1))
-}
+####################################
+# SET THE ENVIRONMENT
+####################################
 
 _setEnv() {
 	# set up the initial environment details
@@ -222,13 +203,12 @@ _setEnv() {
 	_notelosBASE=$(readlink -f "${_altBASE:-${HOME}}")
 	_notelosHOME=$(realpath "${_notelosBASE}/${_notelosNAME}")
 	_notelosLAB=${_selfBASE}
-	# settle the scripts location and PATH
-	#TODO consider changing to $HOME/.local/bin as default
-	if [ "${_binIntegral:-false}" = true ]; then
-		# user specified to pack the scripts within _notelosHOME
+	# settle the location of executable scripts and PATH
+	if [ "${_binIntegral:-true}" = true ]; then
+		# all scripts deployed into .bin directory within _notelosHOME
 		_notelosBIN="${_notelosHOME}/.bin"
 	else
-		# otherwise, the scripts will go to $HOME/bin
+		# user prefers $HOME/bin
 		_notelosBIN="${HOME}/bin"
 	fi
 	# determine user and email from git if possible
@@ -236,9 +216,6 @@ _setEnv() {
 	git config --global --get user.email 1>/dev/null && _notelosUSEREMAIL=$(git config --global --get user.email)
 	[ -z "${_notelosUSERNAME:-}" ] && _notelosUSERNAME=$(whoami)
 	[ -z "${_notelosUSEREMAIL:-}" ] && _notelosUSEREMAIL="unknown"
-	# determine the validity of the intended destination (broadly)
-	[ -d "${_notelosBASE}" ] || { _warn "base '${_notelosBASE}' does not exist"; }
-	[ -w "${_notelosBASE}" ] || { _warn "can't write in given path '${_notelosBASE}'"; }
 	# make these global
 	declare -g _selfNAME
 	declare -g _selfABSOLUTE
@@ -251,58 +228,124 @@ _setEnv() {
 	declare -g _notelosUSERNAME
 	declare -g _notelosUSEREMAIL
 	# print for debug
-	#declare -p _selfNAME
-	#declare -p _selfABSOLUTE
-	#declare -p _selfBASE
-	#declare -p _notelosNAME
-	#declare -p _notelosBASE
-	#declare -p _notelosHOME
-	#declare -p _notelosBIN
-	#declare -p _notelosLAB
-	#declare -p _notelosUSERNAME
-	#declare -p _notelosUSEREMAIL
+	#_debug "$(declare -p _selfNAME)"
+	#_debug "$(declare -p _selfABSOLUTE)"
+	#_debug "$(declare -p _selfBASE)"
+	#_debug "$(declare -p _notelosNAME)"
+	#_debug "$(declare -p _notelosBASE)"
+	#_debug "$(declare -p _notelosHOME)"
+	#_debug "$(declare -p _notelosBIN)"
+	#_debug "$(declare -p _notelosLAB)"
+	#_debug "$(declare -p _notelosUSERNAME)"
+	#_debug "$(declare -p _notelosUSEREMAIL)"
+}
+
+_checkInstalled() {
+	# look for existing installation
+	# return 1 if not installed, 0 if installed
+	[[ -e "${_notelosHOME}/.git/description" ]] && return
+}
+
+_validateEmail() {
+	# lifted from https://gist.github.com/guessi
+	regex="^(([A-Za-z0-9]+((\.|\-|\_|\+)?[A-Za-z0-9]?)*[A-Za-z0-9]+)|[A-Za-z0-9]+)@(([A-Za-z0-9]+)+((\.|\-|\_)?([A-Za-z0-9]+)+)*)+\.([A-Za-z]{2,})+$"
+	[[ $1 =~ ${regex} ]] && return
+}
+
+_isNameValid() {
+  # _isNameValid: check for allowed names
+  # arg = name
+  # return 0 (yes) if valid, 1 (no) if invalid
+  # legal name: max char = 25, min=2
+  #             allowed characters: a-z A-Z 0-9 - .
+  #             first and last character alphanumeric only
+  #             no double dash or dot 
+  #             no dash follows dot and vice versa
+	local _minChar=2
+	local _maxChar=25
+  local _requestedName="${*}"
+  local _strLength=${#_requestedName}
+	local _allowed=0
+  # check first char...must be lowercase or number
+  if [[ ! ${_requestedName} =~ ^[[:alnum:]] ]]; then
+    _warn "first char must be letter or digit"
+    _allowed=1
+  # check string length
+  elif [ "${_strLength}" -lt ${_minChar} ] || [ "${_strLength}" -gt ${_maxChar} ]; then
+    _error "length violation: name must be >${_minChar} and <${_maxChar}"
+    _allowed=1
+  # check last char...must be alpha or number
+  elif [[ ! ${_requestedName} =~ [[:alnum:]]$ ]]; then
+    _error "last char must be letter or digit"
+    _allowed=1
+  # check for allowed characters
+  elif [[ ! ${_requestedName} =~ ^([[:alnum:]]|[-.])*$ ]]; then
+    _error "only alphanumeric, hyphen and period characters allowed"
+    _allowed=1
+  else
+    # check for other conditions we deem illegal
+    case ${_requestedName} in
+      *--* ) _error "double dash"; _allowed=1 ;;
+      *..* ) _error "double dot"; _allowed=1 ;;
+      *.-* ) _error "dash follows dot"; _allowed=1 ;;
+      *-.* ) _error "dot follows dash"; _allowed=1 ;;
+    esac
+  fi
+	return $_allowed
+}
+
+_isBaseValid() {
+	_valid=0
+	[ -d "${1}" ] || { _warn "base '${1}' does not exist"; _valid=1; }
+	[ -w "${1}" ] || { _warn "can't write in given path '${1}'"; _valid=1; }
+	return $_valid
 }
 
 _install() {
+	_checkInstalled && { _warn "pre-existing installation detected, doing upgrade"; _upgrade; }
 	# finalize the source and destination for the operation
-	# (respect the -d global flag)
+	# (respect the -d global "just do it" flag)
 	if [ "${_justDo:-false}" = false ]; then
 		# name can be modified during install
 		_ask "enter name for installation [$(_fmt path "${_notelosNAME}")] "
 		read _name
-		[ -z "${_name}" ] || declare -g _notelosNAME=${_name}
+		[ -z "${_name}" ] || _notelosNAME=${_name}
+		_isNameValid "${_notelosNAME}" || { _error "invalid name '${_notelosNAME}'"; exit 1; }
+		declare -g _notelosNAME
 		# base path can be modified during install
 		_ask "enter base location for installation [$(_fmt path "${_notelosBASE}")] "
 		read _base
-		[ -z "${_base}" ] || declare -g _notelosBASE=${_base}
-		[[ -e "${_notelosBASE}" ]] || { _warn "'${_notelosBASE}' not found"; }
+		[ -z "${_base}" ] || _notelosBASE=${_base}
+		_isBaseValid "${_notelosBASE}" || { _error "'${_notelosBASE}' is not valid base path"; exit 1; }
+		declare -g _notelosBASE
 		declare -g _notelosHOME=${_notelosBASE}/${_notelosNAME}
 		#  lab location (ie git repo) can be modified during install
 		_ask "enter path for git source repo [$(_fmt path "${_notelosLAB}")] "
 		read _repo
 		[ -z "${_repo}" ] || declare -g _notelosLAB=${_repo}
-		[[ -e "${_notelosLAB}" ]] || { _warn "'${_notelosLAB}' is not found"; exit 1; }
-		# binary path can be modified during install
-		_ask "enter location for script executable files [$(_fmt path "${_notelosBIN}")] "
-		read _binpath
-		[ -z "${_binpath}" ] || declare -g _notelosBIN=${_binpath}
+		[[ -e "${_notelosLAB}" ]] || { _error "'${_notelosLAB}' is not found"; exit 1; }
 		# set the user name for git
 		_ask "enter preferred name (for git commits) [$(_fmt path "${_notelosUSERNAME}")] "
 		read _username
-		[ -z "${_username}" ] || declare -g _notelosUSERNAME=${_username}
+		[ -z "${_username}" ] || _notelosUSERNAME=${_username}
 		# set the git email
 		_ask "enter email address (for git commits) [$(_fmt path "${_notelosUSEREMAIL}")] "
 		read _useremail
-		[ -z "${_useremail}" ] || declare -g _notelosUSEREMAIL=${_useremail}
-		#TODO validate email format
+		[ -z "${_useremail}" ] || _notelosUSEREMAIL=${_useremail}
+		_validateEmail "${_notelosUSEREMAIL}" || { _error "invalid email '${_notelosUSEREMAIL}'"; exit 1; }
 		# create a global user gitconfig if it does not exist
 		if [ ! -e "$HOME/.gitconfig" ]; then
 			git config --global user.name "${_notelosUSERNAME}"
 			git config --global user.email "${_notelosUSEREMAIL}"
-			git config --global includeif.gitdir:"${_notelosHOME}".path "${_notelosHOME}/.gitconfig"
+			git config --global includeif.gitdir:"${_notelosHOME}".path "${_notelosHOME}/.git/config"
 		else
-			#TODO should ask the user if this is ok
-			git config --global includeif.gitdir:"${_notelosHOME}".path "${_notelosHOME}/.gitconfig"
+			_ask "update .gitconfig with '${_notelosNAME}' include directive? [y/n] "
+			read _yn
+			if [[ ${_yn} = "y" ]]; then
+				git config --global includeif.gitdir:"${_notelosHOME}".path "${_notelosHOME}/.git/config"
+			else
+				_warn "it is recommended to update the global gitconfig with an includeif statement!"
+			fi
 		fi
 	fi
 	# the source and destination are resolved
@@ -338,17 +381,16 @@ _install() {
 	# now make the notelosHOME directory structure
 	[[ -e "${_notelosHOME}" && $_proceed != true ]] && { _error "'${_notelosHOME}' already exists"; exit 1; }
 	[ ! -d "${_notelosHOME}" ] && mkdir "${_notelosHOME}"
-	mkdir "${_notelosHOME}/.config"		# vimrc etc
+	mkdir "${_notelosHOME}/.config"		# vimrc etc (git tracked)
 	mkdir "${_notelosHOME}/.code"			# make this the lab and integrate dev (future)
-	mkdir "${_notelosHOME}/.state"		# state files
+	mkdir "${_notelosHOME}/.state"		# state (git tracked)
 	mkdir "${_notelosHOME}/.log"			# log files
-	mkdir "${_notelosHOME}/.dsink"		# dsink state and mount
-	mkdir "${_notelosHOME}/.hints"		# hint files
-	mkdir "${_notelosHOME}/.bin"			# alt working executables (default is still $HOME/bin)
+	mkdir "${_notelosHOME}/.dsink"		# dsink state and mount (git tracked)
+	mkdir "${_notelosHOME}/.hints"		# hint files (git tracked)
+	mkdir "${_notelosHOME}/.bin"			# all working executables
 	# now make bin if it's not there
-	[ -d "${_notelosBIN}" ] || mkdir "${_notelosBIN}"
+	[ -d "${_notelosBIN}" ] || mkdir "${_notelosBIN}" || { _error "fatal: could not make '${_notelosBIN}'"; exit 1; }
 	# now put the binary files in place
-	#TODO check for the existence first...otherwise ls errs
 	for _file in $(ls "${_notelosLAB}/bin"); do
 		_installFile "${_notelosLAB}/bin/${_file}" "${_notelosBIN}/${_file}"
 	done
@@ -365,20 +407,31 @@ _install() {
 	# update notelos git config with user and email here
 	git -C "${_notelosHOME}" config user.name "${_notelosUSERNAME}"
 	git -C "${_notelosHOME}" config user.email "${_notelosUSEREMAIL}"
-	# update the git ignore file
+	# update the gitignore file
 	echo ".code" >> "${_notelosHOME}/.gitignore" 
 	echo ".bin" >> "${_notelosHOME}/.gitignore" 
 	echo ".log" >> "${_notelosHOME}/.gitignore"
 	echo ".dsink/mount" >> "${_notelosHOME}/.gitignore" 
-	# add gitignore and components to be tracked in git
+	# add gitignore and other components to be tracked in git
 	git -C "${_notelosHOME}" add "${_notelosHOME}/.gitignore"
 	git -C "${_notelosHOME}" add "${_notelosHOME}/.config/*"
 	git -C "${_notelosHOME}" add "${_notelosHOME}/.hints/*"
-	#TODO update the repo description file
 	# make a first commit
 	git -C "${_notelosHOME}" commit -q -m "[genesis] ${_notelosNAME} created by ${_notelosUSERNAME}"
+	# finally, put the "installed" marker in in git description file
+	_gitInitial=$(git -C "${_notelosHOME}" rev-parse --short --verify main)
+	_time=$(date +%s)
+	printf "${_notelosNAME}:${_notelosUSERNAME}:${_time}:${_gitInitial}\n" > "${_notelosHOME}/.git/description"
 	_info "success...to begin, run 'notelos' after adjusting PATH"
 	#TODO check and warn about required external commands
+	_warn "there are external commands the suite requires!"
+}
+
+_upgrade() {
+	_checkInstalled || { _error "no pre-existing installation found"; exit 1; }
+	_warn "found $(cat ${_notelosHOME}/.git/description) already"
+	echo "upgrade me"
+	exit
 }
 
 # copy wrapper with safeguards
@@ -451,18 +504,17 @@ _checkPath() {
 }
 	
 main() {
-	# preserve the initial command
+	# preserve the initial positional parameters
 	export _fullCommand="${@}"
-	# read the global options
+	# read all the positional parameters
 	_getOpts "${@}"
-	# read the subcommand (and its options)
-	_getSubcommand ${_subCommand}
 	# setup the environment after processing all command line parameters
 	_setEnv
-	_debug "full command is '${_selfNAME} ${_fullCommand}'"
-	_debug "sub command is '${_subCommand}'"
-	# run the desired command (run help if none specified)
-	[ -z "${_subCommand:-}" ] && _printUsage
+	#_debug "full command is '${_selfNAME} ${_fullCommand}'"
+	#_debug "subcommand is '${_subCommand:-nosubcommand}'"
+	#_debug "full subcommand is '${_subCommandParams}'"
+	# run the desired command (run install if none specified)
+	[ -z "${_subCommand:-}" ] && _install
 	[ -n "${_subCommand:-}" ] && eval _"${_subCommand}" || exit
 }
 main "${@}"

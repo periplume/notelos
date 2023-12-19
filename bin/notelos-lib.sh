@@ -346,21 +346,6 @@ _irishExit() {
 	done
 }
 
-# semi-reliable way of guessing the term emulator
-_termDetect() {
-  # print the name of the guessed terminal program
-	test -t || { echo "unknown"; return; }
-	ppid=$(ps -o ppid= -p $$)
-	_command=$(ps -o comm= -p "${ppid}")
-	if [[ $_command == bash ]]; then
-		pppid=$(ps -o ppid= -p $ppid)
-		finally=$(ps -o comm= -p $pppid)
-	else
-		finally=unknown
-	fi
-	echo $finally
-}
-
 _getTERMDIMENSIONS() {
 	# return "columns:lines"
 	local columns=$COLUMNS

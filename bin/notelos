@@ -7,6 +7,7 @@
 set -o errexit
 set -o nounset
 set -o pipefail
+IFS=$'\n\t'
 
 # prevent this file from being sourced
 (return 0 2>/dev/null) && { echo "notelos cannot be sourced"; return; }
@@ -31,7 +32,6 @@ set -o pipefail
 # debug toggle (set to true to enable default global debugging)
 _notelosDEBUG=true
 # silent mode for scripting (supresses all output)
-#TODO not fully implemented
 _notelosSILENT=false
 # logging facility
 _notelosLOG=false
@@ -80,7 +80,7 @@ options:
  -l      log commands and debug info to log file
  -d      print debug info to stdout and/or log
  -D      run with bash 'set -x'
- -s      suppress all stdout/stderr
+ -s      suppress all stdout/stderr  (NOT MEANINGFUL)
  -x      start in OFFLINE mode
  -v      print version number and exit
 
@@ -101,11 +101,12 @@ EOF
 }
 
 ####################################
-# PARAMETER PROCESSING FUNCTIONS
+# PARAMETER PROCESSING
 ####################################
 
 _getOpts () {
-	# check for global command flags and set things accordingly
+	# read all the positional parameters and set things accordingly
+	# first look for the global option flags and option argements
 	local OPTIND
 	while getopts ":hsdDlxva:w:" flag; do
 		case ${flag} in 
@@ -113,10 +114,12 @@ _getOpts () {
 				_printInfo ; _printUsage; exit 0
 				;;
 			a)
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
 				_notelosNAME=${OPTARG}
 				_info "${FUNCNAME[0]} using alternative notelos name '${OPTARG}'"
 				;;
 			w)
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
 				_notelosBASE=${OPTARG}
 				_info "${FUNCNAME[0]} using alternative base path '${OPTARG}'"
 				;;
@@ -144,57 +147,52 @@ _getOpts () {
 				;;
 		esac
 	done
-	shift $((OPTIND - 1))
-	# $_subCommand is used to process the subcommand options below
-	export _subCommand="${@}"
-	#_debug "${FUNCNAME[0]} _studioLOG=${_studioLOG}"
-	#_debug "${FUNCNAME[0]} _studioSILENT=${_studioSILENT}"
-	#_debug "${FUNCNAME[0]} _studioDEBUG=${_studioDEBUG}"
-	return
-}
-
-_getSubcommand() {
-	# look for the first subcommand and set _subCommand accordingly
+	# shift and reset the getopts index before processing subcommands
+	shift $((OPTIND - 1)); OPTIND=1
+	# preserve the full subcommand with its parameters
+	export _subCommandParams="${@}"
+	# next look for the subcommand and check for its options
 	while ((${#})); do
-		#_debug "${FUNCNAME}: reading parameter '${1}'"
-		case $1 in
+		case ${1} in
 			help)
-				_printInfo ; _printUsage; exit 0
+				_printInfo; _printUsage; exit 0
 				;;
 			status)
-				#_debug "${FUNCNAME}: '$1' called, checking for $1 flags now"
-				_subCommand=$1
+				_subCommand=$1; shift
+				# anything more...follow notelos.installer pattern
 				return
 				;;
 			*)
 				_error "'${1}' is not a subcommand"
 				return 1
 				;;
-		esac
-		shift
-	done
+			esac
+		done
 }
+
+####################################
+# SET THE ENVIRONMENT
+####################################
 
 _setEnv() {
   # set (and print) the environment details
   _info "setting up environment now"
   # determine stdin/stdout/stderr particulars
-	[[ -t 0 ]] && _STDIN=term || _STDIN=pipe
-  [[ -t 1 ]] && _STDOUT=term || _STDOUT=pipe
-	[[ -t 2 ]] && _STDERR=term || _STDERR=pipe
-  [[ -p /dev/stdout ]] && _STDOUT=namedpipe
-  [[ ! -t 1 && ! -p /dev/stdout ]] && _STDOUT=redirection
-	_debug "STDIN is attached to a ${_STDIN}" 
-	_debug "STDOUT is attached to a ${_STDOUT}" 
-	_debug "STDERR is attached to a ${_STDERR}" 
+	[[ -t 0 ]] && _notelosSTDIN=term || _notelosSTDIN=pipe
+  [[ -t 1 ]] && _notelosSTDOUT=term || _notelosSTDOUT=pipe
+	[[ -t 2 ]] && _notelosSTDERR=term || _notelosSTDERR=pipe
+  [[ -p /dev/stdout ]] && _notelosSTDOUT=namedpipe
+  [[ ! -t 1 && ! -p /dev/stdout ]] && _notelosSTDOUT=redirection
+	_debug "STDIN is attached to a ${_notelosSTDIN}" 
+	_debug "STDOUT is attached to a ${_notelosSTDOUT}" 
+	_debug "STDERR is attached to a ${_notelosSTDERR}" 
 	# determine details about the terminal
-  _debug "terminal emulator guess is '$(_termDetect)'"
   _debug "terminal advertised (\$TERM) as '${TERM}'"
   _debug "tty device file is '$(tty)'"
 	_debug "terminal color capability advertised (\$COLORTERM) as '${COLORTERM:-unset}'"
 	_debug "terminal color count hueristic reports '$(_getTerminalCOLORCOUNT)'"
-	_isTerminalDARK && _TERMLIGHTMODE=dark || _TERMLIGHTMODE=light
-	_debug "terminal theme appears to be '$_TERMLIGHTMODE'" 
+	_isTerminalDARK && _notelosTERMMODE=dark || _notelosTERMMODE=light
+	_debug "terminal theme appears to be '$_notelosTERMMODE'" 
 	_debug "terminal size (width:height) is '$(_getTERMDIMENSIONS)'"
 	[[ $COLUMNS -lt 100 || $LINES -lt 24 ]] && _warn "terminal size deficiency; 80x24 is min, width > 100 recommended"
 	# determine shell details
@@ -204,7 +202,7 @@ _setEnv() {
 	_debug "parent pid is '$(ps -o ppid= -p $$)'"
 	_debug "shell option flags (\$-) are '$-'"
 	_debug "shell options (\$BASHOPTS): $BASHOPTS"
-	_debug "shell \$PATH is: $PATH"
+	_debug "shell \$PATH is: '$PATH'"
 	_debug "shell user name is '$(whoami)'"
 	_debug "user and group info (\$id) is '$(id)'"
   # get the name and absolute path of the calling script
@@ -225,11 +223,9 @@ _setEnv() {
   _debug "${FUNCNAME[0]} _notelosHOME=${_notelosHOME}"
   _debug "${FUNCNAME[0]} _notelosLAB=${_notelosLAB}"
   # set up git path and command
-	_notelosGITDISK="${_notelosHOME}/.git"
-	_notelosGIT="git --git-dir=${_notelosGITDISK}"
-  _debug "${FUNCNAME[0]} git version: '$(${_notelosGIT} -v)'"
-  _debug "${FUNCNAME[0]} git disk: '${_notelosGITDISK}'"
-  _debug "${FUNCNAME[0]} git command: '${_notelosGIT}'"
+	_notelosGITDIR="${_notelosHOME}/.git"
+  _debug "${FUNCNAME[0]} git version: '$(git -v)'"
+  _debug "${FUNCNAME[0]} git dir: '${_notelosGITDIR}'"
   # set up log details
   _notelosLOGFILE="${_notelosHOME}/.log/${_notelosNAME}.log"
   [[ -f "${_notelosLOGFILE}" ]] && _notelosLOGGING=true
@@ -239,8 +235,8 @@ _setEnv() {
   _debug "${FUNCNAME[0]} _notelosSILENT=${_notelosSILENT}"
   _debug "${FUNCNAME[0]} _notelosLOG=${_notelosLOG}"
 	# set up the user name (from git)
-  if [[ -f "${_notelosGITDISK:-}/config" ]]; then
-    _notelosUSERNAME=$(git -C "${_notelosGITDISK}" config --get user.name)
+  if [[ -f "${_notelosGITDIR:-}/config" ]]; then
+    _notelosUSERNAME=$(git -C "${_notelosGITDIR}" config --get user.name)
   else
 		_notelosUSERNAME=$(git config --get user.name) || _notelosUSERNAME=$(whoami)
   fi
@@ -254,8 +250,7 @@ _setEnv() {
 	export _notelosBASE
 	export _notelosHOME
 	export _notelosLAB
-	export _notelosGITDISK
-	export _notelosGIT
+	export _notelosGITDIR
 	export _notelosLOGFILE
 	export _notelosLOGGING
 	export _notelosUSERNAME
@@ -264,6 +259,7 @@ _setEnv() {
 	export _notelosSILENT
 	export _notelosLOG
 	export _notelosONLINE
+	export _notelosTERMMODE
 	# reinitialize log functions after processing all command line options
 	_fLOG
 }
@@ -282,11 +278,6 @@ _isEnvSufficient() {
 	[ ${_sufficient} = true ] && return 0 || return 1
 }
 
-#################################
-# SUBCOMMAND OPTION PROCESSING
-#################################
-
-
 ###############
 ###### SHELL
 ###############
@@ -294,7 +285,7 @@ _isEnvSufficient() {
 _shell() {
 	# change the command history file
 	# change the prompt dynamically
-	cd "${_notelosHOME}" || { _error "can not enter studio"; return 1; }
+	cd "${_notelosHOME}" || { _error "can not enter the ${_notelosNAME} studio"; return 1; }
 	HISTFILE="${_notelosHOME}/.notelos_history"
 	HISTSIZE=1000
 	HISTFILESIZE=10000
@@ -334,50 +325,12 @@ _shell() {
 		_dsinkMediaName="${green}$(dsink status -m)${reset}" || _dsinkMediaName="${red}none${reset}"
 		echo ${_dsinkMediaName}
 	}
-	_findDsinkDisk() {
-		# check to see if a usb has been inserted and needs authenticating/mounting
-		# if _getDsinkMedia returns "none" then check for device and begin
-		# _mountDsinkDevice
-		# if deice is detected, run _mount, otherwise return 0
-		echo "not implemented"
-		}
-	_printStudioContents() {
-		# the dynamic menu
-		# list the subdirectories inside studio
-		local _cmds
-		_cmds=$(ls .)
-		echo "${_cmds}"
-		# build this out to display type/status/etc for each studio "module"
-		# use printf etc and colors
-	}
-	_interactiveCommandReader() {
-		# command line feedback
-		local _commandList
-		#shopt -s extglob
-		while true; do
-			_commandList=$(_printStudioContents)
-			_altCommands=("get" "print" "show")
-			_feed=("${_commandList}" "${_altCommands}")
-			_chosen="$(printf '%s\n' "${_feed[@]}" |
-				fzf --margin=10% --preview '
-					if $(test -d {}/.git); then
-						echo {} is a git repo
-					else
-						ls -a --color {}
-					fi
-			')"
-			# if the selection is something, return
-			# but not if nothing is selected
-			#[[ ${#_chosen} != 0 ]] || return 0
-			echo ${_chosen} && return 0
-		done
-	}
 	_displayWelcome() {
 		echo -ne "
-   ${yellow}**${cyan}STUDIO${reset}${yellow}**${reset}
+   ${yellow}**${cyan}${_notelosNAME}${reset}${yellow}**${reset}
                              
-   studio: type ${green}h${reset} for guidance
-           type ${red}q${reset} to quit
+       type ${green}h${reset} for guidance
+       type ${red}q${reset} to quit
 
 "
 	}
@@ -394,20 +347,13 @@ _shell() {
 			|| _lin=${green}${lines}${reset}
 		echo $_col:$_lin
 	}
-	# print the termwidth and color scheme (dark/light)
-	# change the color
-	# width gray less than 80, white at 80+
-	# either white on black if SCHEME is dark
-	# or black on white if SCHEME is light
-	# those come from _studioTERMWIDTH and _studioCOLORSCHEME
-	# colors should be tags...
 	_printShellUsage() {
 		echo -ne "
   ?    show help                       === ${red}dsink${reset} ===============
-  0    print _studio ENV               m  mount      x  restore
-  l    list studio contents            u  unmount    y  compare
+  1    do something neat               m  mount      x  restore
+  l    list contents                   u  unmount    y  compare
   w    wordnet lookup                  f  format     z  something
-  j    johnson                         b  backup     -  status?
+  j    docjohnson                      b  backup     -  status?
   g    germ                            ==========================
   e    epistle                         alt-B for term color setting
   r    resume                          alt-i/alt-o for ${green}i${reset}nternet or n${red}o${reset}t
@@ -415,8 +361,8 @@ _shell() {
   n    name a new thing                ====== ${cyan}debug${reset} ================
   s    search                          alt-X   enable bash debug
   -    unused                          alt-x   disable bash debug
-  -    unused                          alt-D   enable studio debug
-  -    unused                          alt-d   disable studio debug
+  -    unused                          alt-D   enable debug
+  -    unused                          alt-d   disable debug
   -    unused                          0       print ENV
   q    quit
 
@@ -441,10 +387,10 @@ _shell() {
 		_cU=$'\001\e[00;32m\002'		#user
 		_cS=$'\001\e[00;33m\002'		#source
 		# set i to green (ONLINE) or red (OFFLINE)
-		[ ${_studioONLINE} = "true" ] && _on=$'\001\e[00;32m\002'i$'\001\e[0m\002' || \
+		[ ${_notelosONLINE} = "true" ] && _on=$'\001\e[00;32m\002'i$'\001\e[0m\002' || \
 			_on=$'\001\e[00;31m\002'i$'\001\e[0m\002'
 		_data="$(_getRF-1)$(_getRF-2)$(_getRF-3)$(_getRF-4)$(_getRF-5)"
-		echo -n "${_cH}${_studioNAME}${reset}:${_cU}${_studioUSER}${reset} [${_data}:$(_getDsinkMedia)] $_on > "
+		echo -n "${_cH}${_notelosNAME}${reset}:${_cU}${_notelosUSERNAME}${reset} [${_data}:$(_getDsinkMedia)] $_on > "
 	}
 	local __input
 	# simple one character interface
@@ -459,7 +405,7 @@ _shell() {
 				_printShellUsage
 				;;
 			0)
-				printenv | grep "^_studio"
+				printenv | grep "^_notelos"
 				;;
 			q)
 				exit
@@ -504,18 +450,17 @@ _shell() {
 				wordnet.studio || :
 				;;
 			j)
-				johnson || :
+				docjohnson || :
 				;;
 			T)
 				# print terminal
 				_toggleTerminalBG || _debug "_toggleTerminalBG returned error"
 				# re-set the global
-				_isTerminalDARK && _studioDARK=true || _studioDARK=false
-				#_printTerminalBG || echo ERR
+				_isTerminalDARK && _notelosTERMMODE=dark || _notelosTERMMODE=light
 				;;
 			$'\e')
 				# read escape keys
-				read -rsn1 -t .002 _escKey || { echo "escape key can be made useful"; continue; }
+				read -rsn1 -t .002 _escKey || { echo "the escape key (alone) can be made useful"; continue; }
 				if [[ "$_escKey" == "[" ]]; then
 					# the trailing 'true' prevents 'read' from croaking on "alt-["
 					read -rsn1 -t .002 _escKey || true
@@ -553,17 +498,17 @@ _shell() {
 						# no [ means an alt key (or escape sequence?)...it works
 						case "$_escKey" in
 							"i")
-								_isOnline && _studioONLINE=true || _warn "not online"
+								_isOnline && _notelosONLINE=true || _warn "not online"
 								;;
 							"o")
-								_studioONLINE=false
+								_notelosONLINE=false
 								;;
 							"d")
-								_studioDEBUG=false
+								_notelosDEBUG=false
 								;;
 							"D")
-								_studioDEBUG=true
-								_debug "enabled studio debug"
+								_notelosDEBUG=true
+								_debug "enabled debug"
 								;;
 							"X")
 								set -x
@@ -572,21 +517,17 @@ _shell() {
 								set +x
 								;;
 							"T")
-								_debug "attempting to swap terminal fg and bg colors"
 								# toggle fg and bg term colors
 								_toggleTerminalBG || _debug "_toggleTerminalBG returned error"
 								# re-set the global
-								_isTerminalDARK && _studioDARK=true || _studioDARK=false
-								$_studioDARK && _info "dark mode enabled" || _info "light mode enabled"
+								_isTerminalDARK && _notelosTERMMODE=dark || _notelosTERMMODE=light
 								;;
 							"B")
 								# set term color scheme
 								# consider using nameref to get the $_user scheme so that we can
 								# save it !!!!
-								echo "_user before: $_user"
-								scheme="/tmp/studio-color.$$"
+								scheme="/tmp/notelos-color.$$"
 								_setTerminalBG || echo ERR
-								echo "_user after: $_user"
 								[[ -e "${scheme}" ]] && _info "scheme found" || _warn "no scheme saved"
 								[[ -e "${scheme}" ]] && cat $scheme
 								;;
@@ -622,22 +563,20 @@ _checkHome() {
 	if [ -d "${_notelosHOME}" ]; then
 		_info "${_notelosNAME} home found"
 	else
-		_error "no notelos home found"
+		_error "notelos home '${_notelosHOME}' not found"
 		exit 1
 	fi
 }
 
 main() {
-	# preserve the initial command
+	# preserve the initial positional parameters
 	export _fullCommand="${@}"
-	# read the global options
+	# read all the positional parameters
 	_getOpts "${@}"
-	# read the subcommand (and its options)
-	_getSubcommand ${_subCommand}
-	# validate the environment
-	_isEnvSufficient || { _error "cannot run until these problems are resolved"; exit 1; }
 	# setup the environment after processing all command line parameters
 	_setEnv
+	# validate the environment
+	_isEnvSufficient || { _error "cannot run until these problems are resolved"; exit 1; }
 	# check the working directory
 	_checkHome
 	# run shell if no arguments
