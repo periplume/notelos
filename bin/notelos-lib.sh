@@ -879,6 +879,8 @@ _setTerminalBG() {
 	declare -A initial
 	# define the same for the user
 	declare -A _user
+	# use nameref to pass the _user selected scheme back to the caller
+	declare -n _user=${1}
 	# the list of elements we cycle through with _cycle
 	declare -a _cycle=("bg" "fg" "cursor" 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)
 	_get_initial() {
