@@ -1071,8 +1071,14 @@ _setTerminalBG() {
 				#declare -n _colorScheme=${1}
 				# save the existing _user scheme to _newColorScheme, which is a nameref
 				# to _colorScheme in notelos
+				# print the _user (current) scheme assoc array
 				declare -p _user
-				_newColorScheme=("${_user[@]}")
+				# copy it to the _newColorScheme nameref which => is set in notelos
+				for key in "${!_user[@]}"; do
+					_newColorScheme["$key"]="${_user["$key"]}"
+				done
+				#_newColorScheme=("${_user[@]}")
+				#TODO this almost works...we lose the keys
 				# a rather inelegant way of keeping the $_user scheme
 				#scheme="/tmp/studio-color.$$"
 				#declare -p _user >> $scheme
