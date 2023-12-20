@@ -1123,9 +1123,8 @@ _adjustColorScheme() {
 				break
 				;;
 			*)
-				#printf '\n'
-				#break
-				continue
+				printf '\n'
+				break
 				;;
 		esac
 

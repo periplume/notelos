@@ -551,7 +551,7 @@ _shell() {
 								_debug "enabled debug"
 								;;
 							"t")
-								tig -C "${_notelosHOME}/.git"
+								tig -C"${_notelosGITDIR}"
 								;;
 							"X")
 								set -x
@@ -580,7 +580,7 @@ _shell() {
 								# and then we have the scheme to do as we please
 								#declare -p _colorScheme
 								# check if it is empty
-								if [ "${#_colorScheme[@]}" -eq 0 ]; then
+								if [ "${#_colorScheme[@]:-}" -eq 0 ]; then
 									# do nothing
 									_debug "no color scheme was saved"
 								else
@@ -593,11 +593,13 @@ _shell() {
 									# 2a. commit it
 									git -C "${_notelosHOME}" add "${_saveAs}"
 									git -C "${_notelosHOME}" commit -q -m "${_mode} theme saved"
-									# 3. add a startup function to look for the default and apply it
+									_info "new ${_mode} color scheme saved"
+									# 3. add a startup function to look for the default and apply
+									# it (_termSET)
 								fi
 								;;
 							"N")
-								declare -p _colorScheme
+								[ ${_colorScheme:-} ] && _debug "$(declare -p _colorScheme)"
 								;;
 							"Q")
 								# secret emergency quit key combo
