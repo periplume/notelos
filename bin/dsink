@@ -246,6 +246,8 @@ _checkExternalTools() {
 
 _backup() {
 	# rsync from local source to mounted usb destination
+	#TODO fix rsync...now that dsink mounts within!
+	# this whole function needs a lot of work now
 	_checkMount || { _warn "dsink usb device not mounted"; return 1; }
 	_rsyncDest="${_MOUNT}"/rsync/
 	rsync -a ${_notelosHOME} "${_rsyncDest}"

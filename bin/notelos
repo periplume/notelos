@@ -580,7 +580,7 @@ _shell() {
 								# and then we have the scheme to do as we please
 								#declare -p _colorScheme
 								# check if it is empty
-								if [[ ! -v ${_colorScheme[@]} ]]; then
+								if [ ! ${_colorScheme:-} ]; then
 									_debug "no color scheme was saved"
 								else
 									# a scheme was saved (and was applied)
@@ -598,6 +598,7 @@ _shell() {
 								fi
 								;;
 							"N")
+								# print $_colorScheme if it is set
 								[ ${_colorScheme:-} ] && _debug "$(declare -p _colorScheme)"
 								;;
 							"Q")
