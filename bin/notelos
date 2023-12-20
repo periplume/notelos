@@ -579,7 +579,7 @@ _shell() {
 								# 1. check if we have a dark or light theme
 								_isTerminalDARK && _mode=dark || _mode=light
 								# 2. save the theme to .state/colorscheme.dark (or .light)
-								_saveAs="${_notelosHOME}/.config/colorscheme.${_mode}"
+								_saveAs="${_notelosHOME}/.state/colorscheme.${_mode}"
 								declare -p _colorScheme > "${_saveAs}"
 								# 2a. commit it
 								git -C "${_notelosHOME}" add "${_saveAs}"
