@@ -1075,7 +1075,7 @@ _setTerminalBG() {
 				declare -p _user
 				# copy it to the _newColorScheme nameref which => is set in notelos
 				for key in "${!_user[@]}"; do
-					_newColorScheme["$key"]="${_user["$key"]}"
+					_newColorScheme[$key]=${_user[$key]}
 				done
 				#_newColorScheme=("${_user[@]}")
 				#TODO this almost works...we lose the keys

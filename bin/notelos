@@ -527,6 +527,7 @@ _shell() {
 								# consider using nameref to get the $_user scheme so that we can
 								# save it !!!!
 								#_colorScheme=
+								declare -A _colorScheme
 								_setTerminalBG _colorScheme
 								declare -p _colorScheme
 								#scheme="/tmp/notelos-color.$$"
