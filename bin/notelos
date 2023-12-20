@@ -294,7 +294,23 @@ _shell() {
 	shopt -s histappend
 	set -o history
 	local _p			#prompt
-	local _menu		#a list of all possible commands
+	_termSET() {
+		# 1. check if dark or light
+		_isTerminalDARK && _mode=dark || _mode=light
+		# 2. check for .state/colorscheme.dark|light
+		if [ -e "${_notelosHOME}/.state/colorscheme.${_mode}" ]; then
+			# we have a matching scheme
+		 	_debug "apply the $_mode scheme"
+			source "${_notelosHOME}/.state/colorscheme.${_mode}"
+			_applyColorScheme _colorScheme
+		else
+			# no match, use the opposite, then toggle
+			source "${_notelosHOME}/.state/colorscheme.*"
+			_applyColorScheme _colorScheme
+			_toggleTerminalBG
+		fi
+	}
+	_termSET
 	# data protection level indicators
 	# RF levels are defined as follows:
 	# RF-1: buffer, editor autosave/swap areas, the dirtiest
@@ -524,16 +540,27 @@ _shell() {
 								;;
 							"B")
 								# set term color scheme
-								# consider using nameref to get the $_user scheme so that we can
-								# save it !!!!
-								#_colorScheme=
+								# a supposedly unnatural method...define an associative array
+								# here (_colorScheme) which is used as a nameref in the
+								# _adjustColorScheme function, thus we can save this color
+								# scheme as our "default"
+								# declare the assoc array first
 								declare -A _colorScheme
-								_setTerminalBG _colorScheme
-								declare -p _colorScheme
-								#scheme="/tmp/notelos-color.$$"
-								#_setTerminalBG || echo ERR
-								#[[ -e "${scheme}" ]] && _info "scheme found" || _warn "no scheme saved"
-								#[[ -e "${scheme}" ]] && cat $scheme
+								# then call the function with the arg name of the assoc array
+								# the "save" function in _adjustColorScheme copies the live
+								# settings into this array
+								_adjustColorScheme _colorScheme
+								# and then we have the scheme to do as we please
+								#declare -p _colorScheme
+								# 1. check if we have a dark or light theme
+								_isTerminalDARK && _mode=dark || _mode=light
+								# 2. save the theme to .state/colorscheme.dark (or .light)
+								_saveAs="${_notelosHOME}/.config/colorscheme.${_mode}"
+								declare -p _colorScheme > "${_saveAs}"
+								# 2a. commit it
+								git -C "${_notelosHOME}" add "${_saveAs}"
+								git -C "${_notelosHOME}" commit -q -m "${_mode} theme saved"
+								# 3. add a startup function to look for the default and apply it
 								;;
 							"N")
 								declare -p _colorScheme

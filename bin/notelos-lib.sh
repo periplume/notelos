@@ -871,7 +871,9 @@ _toggleTerminalBG() {
 	printf "\033]10;%s\033\\" ${fg_set}
 }
 
-_setTerminalBG() {
+# a brute-force kind of xterm-compatible live color adjustment for the terminal
+#TODO allow color names to be changed
+_adjustColorScheme() {
 	# define the ansi 8-bit palette of 16 colors (the names are arbitrary, used
 	# for display, and can be changed)
 	declare -A ansi_palette=([0]="black" [1]="red" [2]="green" [3]="yellow" [4]="blue" [5]="magenta" [6]="cyan" [7]="white" [8]="grey" [9]="brightred" [10]="brightgreen" [11]="brightyellow" [12]="brightblue" [13]="brightmagenta" [14]="brightcyan" [15]="snow")
@@ -883,6 +885,9 @@ _setTerminalBG() {
 	declare -n _newColorScheme=${1}
 	# the list of elements we cycle through with _cycle
 	declare -a _cycle=("bg" "fg" "cursor" 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)
+	# set the i for cycle()
+	local i=0
+	# get the scheme as found
 	_get_initial() {
 		local bg=11		# the SGR code for bg
 		local fg=10		# the SGR code for fg
@@ -1068,21 +1073,11 @@ _setTerminalBG() {
 				_skip=true
 				;;
 			3)
-				#declare -n _colorScheme=${1}
 				# save the existing _user scheme to _newColorScheme, which is a nameref
 				# to _colorScheme in notelos
-				# print the _user (current) scheme assoc array
-				declare -p _user
-				# copy it to the _newColorScheme nameref which => is set in notelos
 				for key in "${!_user[@]}"; do
 					_newColorScheme[$key]=${_user[$key]}
 				done
-				#_newColorScheme=("${_user[@]}")
-				#TODO this almost works...we lose the keys
-				# a rather inelegant way of keeping the $_user scheme
-				#scheme="/tmp/studio-color.$$"
-				#declare -p _user >> $scheme
-				#declare -g _user
 				printf '\n'
 				break
 				;;
@@ -1183,7 +1178,24 @@ _getTerminalCOLORCOUNT() {
 	# turned out to be the most helpful resource
 }
 
-_isTerminalTRUECOLOR() {
+_applyColorScheme() {
+	# set all the colors to the values in $1 (nameref)
+	local -n colorScheme=$1
+	# colorScheme is an assoc array with the scheme
+	for x in "${!colorScheme[@]}"; do
+		if [[ $x = "fg" ]]; then
+			printf "\033]10;#%s\033\\" "${colorScheme["fg"]}"
+		elif [[ $x = "bg" ]]; then
+			printf "\033]11;#%s\033\\" "${colorScheme["bg"]}"
+		elif [[ $x = "cursor" ]]; then
+			printf "\033]12;#%s\033\\" "${colorScheme["cursor"]}"
+		else
+			printf "\033]4;%s;#%s\033\\" $x "${colorScheme[$x]}"
+		fi
+	done
+}
+
+	_isTerminalTRUECOLOR() {
 	# check for $COLORTERM first
 	[[ $COLORTERM =~ ^(truecolor|24bit)$ ]] && return 0
 }
