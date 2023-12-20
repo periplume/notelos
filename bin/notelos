@@ -46,7 +46,7 @@ _fLOG
 ###########################
  
 # required commands
-_requiredCommands=(git fzf tput)
+_requiredCommands=(git fzf tig tput)
 
 ###########################
 # ENVIRONMENT SETTINGS
@@ -404,7 +404,7 @@ _shell() {
   -    unused                          alt-D   enable debug
   -    unused                          alt-d   disable debug
   -    unused                          0       print ENV
-  q    quit
+  q    quit                            alt-t   inspect git with tig
 
 "
 	}
@@ -550,6 +550,9 @@ _shell() {
 								_notelosDEBUG=true
 								_debug "enabled debug"
 								;;
+							"t")
+								tig -C "${_notelosHOME}/.git"
+								;;
 							"X")
 								set -x
 								;;
@@ -576,15 +579,22 @@ _shell() {
 								_adjustColorScheme _colorScheme
 								# and then we have the scheme to do as we please
 								#declare -p _colorScheme
-								# 1. check if we have a dark or light theme
-								_isTerminalDARK && _mode=dark || _mode=light
-								# 2. save the theme to .state/colorscheme.dark (or .light)
-								_saveAs="${_notelosHOME}/.state/colorscheme.${_mode}"
-								declare -p _colorScheme > "${_saveAs}"
-								# 2a. commit it
-								git -C "${_notelosHOME}" add "${_saveAs}"
-								git -C "${_notelosHOME}" commit -q -m "${_mode} theme saved"
-								# 3. add a startup function to look for the default and apply it
+								# check if it is empty
+								if [ "${#_colorScheme[@]}" -eq 0 ]; then
+									# do nothing
+									_debug "no color scheme was saved"
+								else
+									# a scheme was saved
+									# 1. check if we have a dark or light theme
+									_isTerminalDARK && _mode=dark || _mode=light
+									# 2. save the theme to .state/colorscheme.dark (or .light)
+									_saveAs="${_notelosHOME}/.state/colorscheme.${_mode}"
+									declare -p _colorScheme > "${_saveAs}"
+									# 2a. commit it
+									git -C "${_notelosHOME}" add "${_saveAs}"
+									git -C "${_notelosHOME}" commit -q -m "${_mode} theme saved"
+									# 3. add a startup function to look for the default and apply it
+								fi
 								;;
 							"N")
 								declare -p _colorScheme
