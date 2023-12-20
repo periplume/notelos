@@ -880,7 +880,7 @@ _setTerminalBG() {
 	# define the same for the user
 	declare -A _user
 	# use nameref to pass the _user selected scheme back to the caller
-	declare -n _colorScheme=${1}
+	declare -n _newColorScheme=${1}
 	# the list of elements we cycle through with _cycle
 	declare -a _cycle=("bg" "fg" "cursor" 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)
 	_get_initial() {
@@ -1069,8 +1069,9 @@ _setTerminalBG() {
 				;;
 			3)
 				#declare -n _colorScheme=${1}
-				# save the existing _user scheme to _colorScheme, which is a nameref
-				_colorScheme=("${_user[@]}")
+				# save the existing _user scheme to _newColorScheme, which is a nameref
+				# to _colorScheme in notelos
+				_newColorScheme=("${_user[@]}")
 				# a rather inelegant way of keeping the $_user scheme
 				#scheme="/tmp/studio-color.$$"
 				#declare -p _user >> $scheme

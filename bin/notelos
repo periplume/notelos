@@ -526,13 +526,16 @@ _shell() {
 								# set term color scheme
 								# consider using nameref to get the $_user scheme so that we can
 								# save it !!!!
-								_colorScheme=
+								#_colorScheme=
 								_setTerminalBG _colorScheme
 								declare -p _colorScheme
 								#scheme="/tmp/notelos-color.$$"
 								#_setTerminalBG || echo ERR
 								#[[ -e "${scheme}" ]] && _info "scheme found" || _warn "no scheme saved"
 								#[[ -e "${scheme}" ]] && cat $scheme
+								;;
+							"N")
+								declare -p _colorScheme
 								;;
 							"Q")
 								# secret emergency quit key combo
