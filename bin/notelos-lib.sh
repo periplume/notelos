@@ -970,7 +970,7 @@ _adjustColorScheme() {
 		}
 		# paint the screen
 		clear
-		printf "\033[1m(0)reset (1)toggle fg/bg (2)cycle colors (3)save\033[0m\n"
+		printf "\033[1m(0)reset (1)toggle fg/bg (2)cycle colors (3)save (q)reset and quit\033[0m\n"
 		printf "\033[1m(G)+green (g)-green (R)+red (r)-red (B)+blue (b)-blue\033[0m\n"
 		echo
 		printf ':------base------hex-----r,g,b------luminance-------mode:%s-----------------o\n' $(mode)
@@ -1117,9 +1117,15 @@ _adjustColorScheme() {
 				[[ $b -gt 0 ]] && ((b--))
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
 				;;
-			*)
+			q)
+				reset_initial
 				printf '\n'
 				break
+				;;
+			*)
+				#printf '\n'
+				#break
+				continue
 				;;
 		esac
 
