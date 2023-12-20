@@ -297,17 +297,41 @@ _shell() {
 	_termSET() {
 		# 1. check if dark or light
 		_isTerminalDARK && _mode=dark || _mode=light
-		# 2. check for .state/colorscheme.dark|light
-		if [ -e "${_notelosHOME}/.state/colorscheme.${_mode}" ]; then
-			# we have a matching scheme
-		 	_debug "apply the $_mode scheme"
-			source "${_notelosHOME}/.state/colorscheme.${_mode}"
-			_applyColorScheme _colorScheme
+		if [ ${_mode} = "dark" ]; then
+			if [ -e "${_notelosHOME}/.state/colorscheme.dark" ]; then
+				# we have a saved dark scheme
+				source "${_notelosHOME}/.state/colorscheme.dark"
+				_applyColorScheme _colorScheme
+			else
+				# we do not have a matching scheme
+				if [ -e "${_notelosHOME}/.state/colorscheme.light" ]; then
+					# we have the opposite
+					source "${_notelosHOME}/.state/colorscheme.light"
+					_applyColorScheme _colorScheme
+					_toggleTerminalBG
+				else
+					# we have no saved schemes
+					_debug "no saved color scheme to apply"
+				fi
+			fi
 		else
-			# no match, use the opposite, then toggle
-			source "${_notelosHOME}/.state/colorscheme.*"
-			_applyColorScheme _colorScheme
-			_toggleTerminalBG
+			# mode is light
+			if [ -e "${_notelosHOME}/.state/colorscheme.light" ]; then
+				# we have a matching light scheme
+				source "${_notelosHOME}/.state/colorscheme.light"
+				_applyColorScheme _colorScheme
+			else
+				# no matching scheme
+				if [ -e "${_notelosHOME}/.state/colorscheme.dark" ]; then
+					# we have the opposite
+					source "${_notelosHOME}/.state/colorscheme.light"
+					_applyColorScheme _colorScheme
+					_toggleTerminalBG
+				else
+					# we have no saved schemes
+					_debug "no saved color scheme to apply"
+				fi
+			fi
 		fi
 	}
 	_termSET
