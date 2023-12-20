@@ -1000,6 +1000,7 @@ _adjustColorScheme() {
 		printf '%s' "${_cycle[${i:=0}]}"
 		((i=i>=${#_cycle[@]}-1?0:++i))
 		_current=${_cycle[$i]}
+		_debug "cycle i=$i"
 	}
 
 	reset_initial() {
@@ -1082,38 +1083,44 @@ _adjustColorScheme() {
 				break
 				;;
 			R)
+				# get the hex rgb value for the current element
 				hex=${_user[$_current]}
-				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2}))
+				# convert hex to decimal (and return true if this evaluation returns
+				# false (as it does when b=0 for a reason i don't understand)
+				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2})) || :
+				# add one if we are less than 255
 				[[ $r -lt 255 ]] && ((r++))
+				# set _user (active scheme) 
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
+				# this whole routine needs its own function
 				;;
 			r)
 				hex=${_user[$_current]}
-				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2}))
+				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2})) || :
 				[[ $r -gt 0 ]] && ((r--))
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
 				;;
 			G)
 				hex=${_user[$_current]}
-				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2}))
+				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2})) || :
 				[[ $g -lt 255 ]] && ((g++))
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
 				;;
 			g)
 				hex=${_user[$_current]}
-				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2}))
+				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2})) || :
 				[[ $g -gt 0 ]] && ((g--))
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
 				;;
 			B)
 				hex=${_user[$_current]}
-				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2}))
+				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2})) || :
 				[[ $b -lt 255 ]] && ((b++))
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
 				;;
 			b)
 				hex=${_user[$_current]}
-				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2}))
+				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2})) || :
 				[[ $b -gt 0 ]] && ((b--))
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
 				;;
