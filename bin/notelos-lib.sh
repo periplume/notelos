@@ -998,9 +998,10 @@ _adjustColorScheme() {
 	cycle() {
 		# cycles through the $_cycle list (defined above) and sets $_current
 		printf '%s' "${_cycle[${i:=0}]}"
-		((i=i>=${#_cycle[@]}-1?0:++i))
+		((i=i>=${#_cycle[@]}-1?0:++i)) || :
+		# the OR true fixes something obscure to me (which is that when the value is
+		# zero the evaluation returns 1)
 		_current=${_cycle[$i]}
-		_debug "cycle i=$i"
 	}
 
 	reset_initial() {
@@ -1097,7 +1098,7 @@ _adjustColorScheme() {
 			r)
 				hex=${_user[$_current]}
 				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2})) || :
-				[[ $r -gt 0 ]] && ((r--))
+				[[ $r -gt 0 ]] && ((r--)) || :
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
 				;;
 			G)
@@ -1109,7 +1110,7 @@ _adjustColorScheme() {
 			g)
 				hex=${_user[$_current]}
 				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2})) || :
-				[[ $g -gt 0 ]] && ((g--))
+				[[ $g -gt 0 ]] && ((g--)) || :
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
 				;;
 			B)
@@ -1121,7 +1122,7 @@ _adjustColorScheme() {
 			b)
 				hex=${_user[$_current]}
 				((r=16#${hex:0:2},g=16#${hex:2:2},b=16#${hex:4:2})) || :
-				[[ $b -gt 0 ]] && ((b--))
+				[[ $b -gt 0 ]] && ((b--)) || :
 				_user["$_current"]=$(printf '%02x%02x%02x\n' $r $g $b)
 				;;
 			q)
