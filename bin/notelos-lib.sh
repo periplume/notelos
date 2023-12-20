@@ -1071,6 +1071,7 @@ _setTerminalBG() {
 				#declare -n _colorScheme=${1}
 				# save the existing _user scheme to _newColorScheme, which is a nameref
 				# to _colorScheme in notelos
+				declare -p _user
 				_newColorScheme=("${_user[@]}")
 				# a rather inelegant way of keeping the $_user scheme
 				#scheme="/tmp/studio-color.$$"
