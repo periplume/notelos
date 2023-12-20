@@ -580,11 +580,10 @@ _shell() {
 								# and then we have the scheme to do as we please
 								#declare -p _colorScheme
 								# check if it is empty
-								if [ "${#_colorScheme[@]:-}" -eq 0 ]; then
-									# do nothing
+								if [[ ! -v ${_colorScheme[@]} ]]; then
 									_debug "no color scheme was saved"
 								else
-									# a scheme was saved
+									# a scheme was saved (and was applied)
 									# 1. check if we have a dark or light theme
 									_isTerminalDARK && _mode=dark || _mode=light
 									# 2. save the theme to .state/colorscheme.dark (or .light)
