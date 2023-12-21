@@ -294,7 +294,15 @@ _shell() {
 	shopt -s histappend
 	set -o history
 	local _p			#prompt
+	_capDETECT() {
+		# check if CAPS LOCK is on
+		# return 0 if not, 1 if yes on
+		cat /sys/class/leds/input?::capslock/brightness
+	}
+
 	_termSET() {
+		# change the xterm window title
+		echo -e '\033]0;${_notelosNAME}\a'
 		# 1. check if dark or light
 		_isTerminalDARK && _mode=dark || _mode=light
 		if [ ${_mode} = "dark" ]; then
@@ -397,7 +405,7 @@ _shell() {
   g    germ                            ==========================
   e    epistle                         alt-B for term color setting
   r    resume                          alt-i/alt-o for ${green}i${reset}nternet or n${red}o${reset}t
-  -    unused                          terminal dimensions: $(_termINFO)
+  -    unused                          terminal dimensions: $(_termINFO) CAPS:$(_capDETECT)
   n    name a new thing                ====== ${cyan}debug${reset} ================
   s    search                          alt-X   enable bash debug
   -    unused                          alt-x   disable bash debug

@@ -745,11 +745,11 @@ getHTTPheaders () {
 # check out lazygit
 
 ### UNIFIED EDITOR
-_studioEdit() {
+_notelosEdit() {
 	# given path ($1)
 	[[ -z "${1}" ]] && { _error "full path is required"; return 1; }
   local _file=${1}
-	vim -u "${_studioDir}/.config/vimrc" -c 'set syntax=markdown' "${_file}"
+	vim -u "${_notelosHOME}/.config/vimrc" -c 'set syntax=markdown' "${_file}"
 }
 
 # FUN
@@ -871,6 +871,9 @@ _toggleTerminalBG() {
 	printf "\033]10;%s\033\\" ${fg_set}
 }
 
+
+# helpful advice:
+# https://jeffkreeftmeijer.com/vim-16-color/
 # a brute-force kind of xterm-compatible live color adjustment for the terminal
 #TODO allow color names to be changed
 _adjustColorScheme() {
@@ -970,7 +973,7 @@ _adjustColorScheme() {
 		}
 		# paint the screen
 		clear
-		printf "\033[1m(0)reset (1)toggle fg/bg (2)cycle colors (s)save (q)reset and quit\033[0m\n"
+		printf "\033[1m(0)reset (1)toggle fg/bg (2)cycle colors (s)save (q)reset+quit\033[0m\n"
 		printf "\033[1m(G)+green (g)-green (R)+red (r)-red (B)+blue (b)-blue\033[0m\n"
 		echo
 		printf ':------base------hex-----r,g,b------luminance-------mode:%s-----------------o\n' $(mode)
@@ -991,7 +994,8 @@ _adjustColorScheme() {
 		printf " > press '2' to cycle through the elements (the active one \033[7;5mblinks\033[0m)\n"
 		printf " > use keys 'RGB' to increase red, green, and blue; and 'rgb' to decrease\n"
 		printf " > press '1' to swap bg and fg colors, ie toggle light and dark\n"
-		printf " > choose a scheme that reads well in \033[3mboth\033[0m light and dark mode\n"
+		printf " > ideally save a light \033[3mand\033[0m dark mode\n"
+		printf " > consult \033[3mcolorcodes.io\033[0m for color mixing guidance\n"
 		printf " > p.s. don't forget the cursor -->"
 	}
 
@@ -1152,12 +1156,6 @@ _adjustColorScheme() {
 	done
 }
 
-# set the xterm window title
-# $ echo -e '\033]0;new window title\a'
-
-# guidance
-# https://jeffkreeftmeijer.com/vim-16-color/
-
 _getTerminalCOLORCOUNT() {
 	# lets figure out how many colors the term supports
 	# bits		colors			name
@@ -1194,6 +1192,7 @@ _getTerminalCOLORCOUNT() {
 
 _applyColorScheme() {
 	# set all the colors to the values in $1 (nameref)
+	# used in notelos _shell: _setTERM
 	local -n colorScheme=$1
 	# colorScheme is an assoc array with the scheme
 	for x in "${!colorScheme[@]}"; do
@@ -1207,6 +1206,8 @@ _applyColorScheme() {
 			printf "\033]4;%s;#%s\033\\" $x "${colorScheme[$x]}"
 		fi
 	done
+	#TODO better understand why doing this breaks gnome-terminal from later applying a different
+	# color scheme from the GUI
 }
 
 	_isTerminalTRUECOLOR() {
