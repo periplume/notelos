@@ -1,0 +1,1176 @@
+#!/usr/bin/env bash
+# file: germ
+# source: https://github.com/periplume/germ.git
+# author: jason@bloom.us
+# description: note taking tool
+
+# STRICT SHELL
+set -o errexit 
+set -o nounset
+set -o pipefail
+IFS=$'\n\t'
+
+###########################
+# PREREQUISITES
+###########################
+ 
+# required external commands
+_requiredCommands=(git tig vipe fzf)
+
+###########################
+# LIBRARY
+###########################
+
+# source library commands and set up log/console
+# use the library file from the same directory if possible
+[[ -e "$(dirname $0)/notelos-lib.sh" ]] \
+	&& source "$(dirname $0)/notelos-lib.sh" \
+	|| source notelos-lib.sh
+
+###########################
+# LOGGING AND CONSOLE
+###########################
+
+# default initial debugging and logging settings
+# note: command line parameters can modify these
+# script debug toggle (set to true to enable default global debugging)
+_DEBUG=false
+# silent mode for scripting (supresses all output)
+_SILENT=false
+# logging facility
+_LOG=false
+
+# instantiate the log/mesg functions with defaults (these will be re-initialized
+# after reading positional parameters)
+_fLOG
+
+####################################
+# HELPER FUNCTIONS
+####################################
+
+_printUsage () {
+  cat << EOF
+usage: germ [OPTIONS] <command> [OPTIONS]
+
+options:
+ -h      print this usage info
+ -l      log commands and debug info to log file
+ -d      print debug info to stdout and/or log
+ -s      suppress all stdout/stderr
+ -v      print version number and exit
+ -x      force standalone mode
+
+alternate env settings:
+ -a <name>  set the germ dir name to <name>
+ -p <path>  set alternate base path
+
+commands:
+EOF
+_printCommands
+}
+
+_printCommands() {
+	cat <<  EOF
+ add                 add a new germ entry to the database
+ edit                edit an existing germ entry
+ create              create a new germ git database
+ inspect             run tig on the germ git bare repo
+ sizer               run github sizer tool on germ git bare repo
+ search              interactive search
+ browse              read through the current source entities
+ source              add and manipulate source
+EOF
+}
+
+_printInfo () {
+  cat << EOF
+germ takes simple notes and adds them to a git repo
+EOF
+}
+
+####################################
+# PARAMETER PROCESSING
+####################################
+
+_getOpts () {
+	# preserve the initial positional parameters
+	export _fullCommand="${@}"
+	_debug "full command is '${_fullCommand}'"
+	local OPTIND
+	# do not allow names for notelos or self to be names of germ commands
+	_isCommand() {
+		local _allowed=true
+		local _commandList
+		_commandList=$(_printCommands | cut -f2 -d' ')
+		for _command in ${_commandList}; do
+      [[ "${_command}" = "${1}" ]] && _allowed=false 
+    done
+    [[ ${_allowed} = "true" ]] || return 1
+  }
+	while getopts ":hsdlxva:p:" flag ; do
+		case ${flag} in 
+			h)
+				_printInfo; _printUsage; exit 0
+				;;
+			a)
+				_isCommand "${OPTARG}" || { _error "'${OPTARG}' is not allowed (it is a command)"; exit 1; }
+				_NAME=${OPTARG}
+				_warn "using alt name '${_NAME}'"
+				;;
+			p)
+				_BASE=${OPTARG}
+				_warn "using alt path '${_BASE}'"
+				;;
+ 	    s)
+				_debug "${FUNCNAME[0]}: enabling silent mode with flag -$flag"
+ 	      _SILENT=true
+				;;
+			d)
+				_debug "${FUNCNAME[0]}: enabled debug mode with flag -$flag"
+				_DEBUG=true
+				;;
+			l)
+				_debug "${FUNCNAME[0]}: enabled log mode with flag -$flag"
+				_LOG=true
+				;;
+			x)
+        _debug "${FUNCNAME[0]}: running in standalone mode with -$flag"
+        _MODE=standalone
+        ;;
+			v)
+				_info "${green}verion${reset}: beta"; exit 0
+				;;
+			?)
+				_error "invalid global option: -${OPTARG}"; exit 1
+				;;
+		esac
+	done
+	shift $((OPTIND - 1)); OPTIND=1
+	# preserve the full subcommand with its parameters
+	export _subCommandParams="${@}"
+	# look for the subcommand and check for its options
+	while ((${#})); do
+		case ${1} in
+			help)
+				_printInfo; _printUsage; exit 0
+				;;
+			add)
+				_subCommand=$1; shift
+				while getopts ":ib" flag; do
+					case ${flag} in
+						i)
+							# inline add (no editor invoked)
+							_debug "enabled inline mode"
+							_inline=true
+							_inlineString="${_subCommandParams#*add -i*}"
+							_debug "inline string: '${_inlineString}'"
+							;;
+						b)
+							# bulk add disables commit...this is a hack to allow bulk input
+							# without commiting each one...behavior is not correct imo
+							_debug "bulk add operation"
+							_bulk=true
+							;;
+						?)
+				 			_error "${FUNCNAME}: unknown flag -${OPTARG}"; exit 1
+							;;
+					esac
+				done
+				return
+				;;
+			edit)
+				_subCommand=$1; shift
+				return
+				;;
+			create)
+				_subCommand=$1; shift
+				return
+				;;
+			inspect)
+				_subCommand=$1; shift
+				return
+				;;
+			status)
+				_subCommand=$1
+				return
+				;;
+			source)
+				_subCommand=$1
+				return
+				;;
+			*)
+				_error "${FUNCNAME}: '${1}' is not a subcommand"
+				return 1
+				;;
+		esac
+		shift
+	done
+}
+
+_setEnv() {
+  # get the name and absolute path of the calling script
+  _selfNAME=$(basename "${BASH_SOURCE[0]}")
+  _selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
+  _selfBASE=$(dirname "${_selfABSOLUTE}")
+  _selfCALL=${0}
+  _selfPWD=$(pwd)
+	# determine mode (notelos-integrated or standalone)
+	[[ -n "${_notelosHOME+x}" && ${_MODE:-} != "standalone" ]] && _MODE=integrated || _MODE=standalone
+	# note: the -x switch overrides the global _notelosHOME var 
+	# set up the working environment
+	if [[ ${_MODE} = "integrated" ]]; then
+		# set up integrated mode
+		_MASTER="${_notelosNAME}"
+		_BASE="${_notelosHOME}"
+		_NAME="${_NAME:-germ}"
+		_HOME="${_BASE}/${_NAME}"
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/.log/${_NAME}.log"
+		# inherit these (from notelos)
+		_DEBUG=${_notelosDEBUG}
+		_LOG=${_notelosLOG}
+		_SILENT=${_notelosSILENT}
+		_USERNAME=${_notelosUSERNAME}
+		_USEREMAIL=${_notelosUSEREMAIL}
+	else
+		# set up standalone mode
+		_MASTER=self
+		_BASE="${_BASE:-$HOME}"
+		_NAME="${_NAME:-germ}"
+		_HOME=${_BASE}/${_NAME}
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/${_NAME}.log"
+		# inherit these
+		_DEBUG=${_DEBUG:-false}
+		_LOG=${_LOG:-false}
+		_SILENT=${_SILENT:-false}
+		_USERNAME=$(whoami)
+		_USEREMAIL="unknown"
+		#TODO hold while testing
+		_EDITOR="vim -u $HOME/notelos/.config/vimrc"
+	fi
+  [[ -f "${_LOGFILE:-}" ]] && _LOGGING=true || _LOGGING=false
+	_debug "$(declare -p _MODE)"
+	_debug "$(declare -p _MASTER)"
+	_debug "$(declare -p _NAME)"
+	_debug "$(declare -p _BASE)"
+	_debug "$(declare -p _HOME)"
+	_debug "$(declare -p _USERNAME)"
+	_debug "$(declare -p _USEREMAIL)"
+	_debug "$(declare -p _GITDIR)"
+	_debug "$(declare -p _LOGFILE)"
+	_debug "$(declare -p _DEBUG)"
+	_debug "$(declare -p _SILENT)"
+	_debug "$(declare -p _LOG)"
+	_debug "$(declare -p _LOGGING)"
+	export _MODE
+	export _MASTER
+	export _NAME
+	export _BASE
+	export _HOME
+	export _USERNAME
+	export _USEREMAIL
+	export _GITDIR
+	export _LOGFILE
+	export _DEBUG
+	export _SILENT
+	export _LOG
+	export _LOGGING
+}
+
+_checkExternalTools() {
+	# check for required tools, report accordingly
+	local _sufficient=true
+	for _required in "${_requiredCommands[@]}"; do
+		if ! hash "${_required}" 2>/dev/null; then
+			_warn "${FUNCNAME}: ${_required} not found"
+			_sufficient=false
+		else
+			: #_debug "${FUNCNAME}: ${_required} found"
+		fi
+	done
+	[ ${_sufficient} = true ] && return 0 || return 1
+}
+
+_checkHome() {
+  # check if the home dir exists
+  # check if it is a germ-created git
+  # return 1 if missing or not git
+  # mind condition: if subcommand is create
+	[[ ! -d "${_BASE}" && ${_MODE} = "notelos" ]] && { _error "notelos base not found"; exit 1; }
+	[[ -d "${_BASE}" ]] || { _error "base '${_BASE}' does not exist"; exit 1; }
+	local _base="${_BASE}"
+	local _dirName="${_NAME}"
+	local _dirPath="${_HOME}"
+	local _git_desc="${_dirPath}/.git/description"
+  if [ -d "${_dirPath}" ]; then
+    if [ -f "${_git_desc}" ]; then
+      # the git description file exists, lets check it for our marker
+      read -r _desc < "${_git_desc}"
+      if [[ ${_desc} = "${_MASTER}:${_dirName}" ]]; then
+        # if repo does exist, return 0
+        _debug "${_git_desc} = ${_desc}"
+				return
+      else
+        # if repo does not exist, warn and exit
+        _error "${_dirPath} exists and is NOT a studio-created repo"
+        return 1
+      fi
+    else
+      _error "${_dirPath} exists and is NOT a git repo"
+      _error "move existing ${_dirPath} before proceeding"
+      return 1
+    fi
+  else
+    # dir does not exist
+    _warn "'${_dirPath}' does not exist"
+    read -rsn1 -p "$(_ask 'create repo now? [y/n]')" _yn
+    echo
+    [[ ${_yn} != "y" ]] && { _warn "cannot run without a repo"; return 1;  }
+    _create || { _error "could not create ${_dirName} repo"; return 1; }
+    return
+  fi
+}
+
+############################
+# CREATE
+############################
+
+_create() {
+	# do not overwrite an existing anything
+	[[ -d "${_HOME}" ]] && { _error "'${_HOME}' exists"; return 1; }
+	[ ! -d "${_HOME}" ] && mkdir "${_HOME}"
+	git init -q -b main "${_HOME}"
+  git -C "${_HOME}" config user.name "${_USERNAME}"
+  git -C "${_HOME}" config user.email "${_USEREMAIL}"
+	echo "${_MASTER}:${_NAME}" > "${_GITDIR}/description"
+	mkdir "${_HOME}/default"
+	echo "default source (notebook, project, etc)" > "${_HOME}/default/.description"
+	echo "default" > "${_HOME}/.current"
+	echo ".current" > "${_HOME}/.gitignore"
+	echo ".${_NAME}_history" >> "${_HOME}/.gitignore"
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/default/.description" 
+  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
+}
+
+##################################
+# INSPECT
+##################################
+
+_inspect() {
+	tig -C${_GITDIR}
+}
+
+##################################
+# ADD
+##################################
+
+_add() {
+	# add a new entry
+	# important things
+	# path to working project directory = ${_selfDirPath}
+	# current source = ${_currentSource}
+	# file name = $(_getNewKey)
+	# whether this is interactive or coming in from stdin: ${_inline} (boolean)
+	# the editor command to use
+	local _currentSource=$(_getSource)
+	local _dir="${_HOME}/${_currentSource}"
+	local _key=$(_getNewKey)
+	local _file="${_dir}/${_key}"
+	local _commitMsg
+	if [ ${_inline:-null} = "true" ]; then
+		# check for piped standard input
+		# note that pipe input takes priority over message appended to 'add -i'
+		if [ -p /dev/stdin ]; then
+			cat < /dev/stdin > "${_file}"
+		else
+			[ -z "${_inlineString}" ] && { _error "${FUNCNAME}: 'add -i' cannot contain an empty message"; return 1; }
+			echo "$(_trimString ${_inlineString})" > "${_file}"
+		fi
+	else
+		[ -p /dev/stdin ] && { _error "use 'add -i' for pipe input"; return 1; }
+		eval ${_EDITOR} "${_file}"
+	fi
+	[[ -e "${_file}" ]] || return
+	_commitMsg=$(_buildCommitMsg "$(cat "${_file}")")
+	_doCommit "${_currentSource}/${_key}" "[add to ${_currentSource}] ${_commitMsg}"
+}
+
+_trimString() {
+	# Usage: trim_string "   example   string    "
+	# source https://github.com/dylanaraps/pure-bash-bible
+	: "${1#"${1%%[![:space:]]*}"}"
+	: "${_%"${_##*[![:space:]]}"}"
+	printf '%s\n' "$_"
+}
+
+_getNewKey() {
+	# print the key (unixseconds.nano)
+	echo "$(date +%s.%N)"
+}
+
+_edit() {
+	# launch picker to select what to edit
+	local _currentSource=$(_getSource)
+	local _dir="${_HOME}/${_currentSource}"
+	local _key=$(_browse)
+	local _file="${_dir}/${_key}"
+	[[ -z "${_file}" ]] && { _warn "nothing selcted"; return; }
+	eval "${_EDITOR}" "${_file}"
+	# test for changes
+  git -C "${_HOME}" --git-dir="${_GITDIR}" diff --quiet --exit-code "${_file}" && return
+	_commitMsgString=$(_buildCommitMsg "$(cat "${_file}")")
+	# save file and commit
+	_doCommit "${_currentSource}/${_key}" "[edit in ${_currentSource}] ${_commitMsgString}"
+}	
+
+
+_buildCommitMsg() {
+	#TODO strict IFS breaks this!!
+	# arg 1 = string [required]
+	# read string (the whole blob) line by line
+	# construct git commit message string (combining lines until max exceeded)
+	# truncate if necessary and append with "..."
+	# total character count <=75
+	# print string or return 1
+	local _maxLength=60
+	local _commitMsgString=
+	local _lines
+	# empty string not allowed
+	[ -z "${1:-}" ] && return 1
+	# count lines
+	l="${1//[!$'\n']/}"
+	_lines=$((${#l} + 1))
+	# process multi-line entries
+	while read -r line; do
+		# single line entry, set and break
+		if [ ${_lines} = 1 ]; then
+			_commitMsgString="${1}"
+			break
+		fi
+		words=($line)
+		# one word lines
+		if [[ ${#words[@]} = 1 ]]; then
+			# if the commit message string is empty
+			if [[ -z "${_commitMsgString}" ]]; then
+				_commitMsgString+="${line%% *}:"
+			elif [[ ${_commitMsgString:(-1)} = ":" ]]; then
+				_commitMsgString+=" ${line%% *}"
+			else
+				_commitMsgString+="; ${line%% *}"
+			fi
+		# empty lines
+		elif [[ ${#words[@]} = 0 ]]; then
+			true
+		# multi-word lines
+		else
+			if [[ ${_commitMsgString:(-1)} = ":" ]]; then
+				# first line after first-word+colon
+				_commitMsgString+=" ${line}"
+			elif [[ -z "${_commitMsgString}" ]]; then
+				# first slot in empty commit message string
+				_commitMsgString+="${line}:"
+			else
+				# insert semi-colon to designate new line
+				_commitMsgString+="; ${line}"
+			fi	
+		fi
+		# once we have exceeded the maxLength...stop processing
+		if [[ ${#_commitMsgString} -ge ${_maxLength} ]]; then
+			break
+		fi
+	done < <(printf '%s\n' "${1}")
+	# truncate if necessary, appending elipsis to indicate truncation
+	if [[ ${#_commitMsgString} -ge ${_maxLength} ]]; then
+		_commitMsgString="${_commitMsgString:0:${_maxLength}}..."
+	fi
+	# this should never occur...
+	[ -z "${_commitMsgString}" ] && return 1
+	# return the final string...with echo (should be using the indirect variable
+	# here
+	echo "${_commitMsgString}"
+}
+
+_doCommit() {
+	_newFile="${1}"
+	_commitMsg="${2}"
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_newFile}"  
+  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "${_commitMsg}"
+}	
+
+_isIndexClean() {
+	git -C "${_HOME}" --git-dir="${_GITDIR}" diff-index --quiet --cached main 2>&1 >/dev/null || return 1
+}
+
+################
+# SOURCE
+################
+
+_getSource() {
+	# print the current SOURCE
+	! _isSourceSet && { echo "default"; return; }
+	cat "${_HOME}/.current"
+}
+
+_isSourceSet() {
+	# return 0 if true
+	# return 1 if false
+	[[ -e "${_HOME}/.current" ]]
+}
+
+_doesSourceExist() {
+	# return 0 if true (yes)
+	# return 1 if false (no)
+	[[ -d "${_HOME}/${1}" ]]
+}
+export -f _doesSourceExist
+
+_setSource() {
+	# arg 1 = new source
+	# check if source is set, if so, remove
+	# then set to new
+	[ -z "${1:-}" ] && return 1
+	_isSourceSet && echo "${1}" > "${_HOME}/.current"
+	export _currentSource=${1}
+}
+
+_saveSource() {
+	# arg 1 = source name
+	# arg 2 = source description
+	mkdir "${_HOME}/$1"
+	echo "${2}" > "${_HOME}/$1/.description"
+}
+
+_getSourceList() {
+	ls "${_HOME}"
+}
+export -f _getSourceList
+
+_printSourceEntities() {
+	# arg 1 = source
+	ls "${_HOME}/${1}"
+}
+export -f _printSourceEntities
+
+_getSourceCount() {
+	# arg 1 = source
+	local _count=0
+	_count=$(_printSourceEntities ${1} | wc -l)
+	echo "$_count"
+}
+export -f _getSourceCount
+
+_validateSourceName(){
+	# function used within fzf preview window to assist in the selection of a
+	# source name
+	local _maxLength=25
+	local _minLength=1
+	local _newSourceName
+	local lengthStatus
+	local avail
+	local allowedChars="n/a"
+	local lead="n/a"
+	local last="n/a"
+	local repeat="n/a"
+	local acceptable="NO"
+	_cStat() {
+		# arg 1 = key word
+		# print the key word in a set color
+		[[ "${1}" =~ ^(YES|OK) ]] && tput setaf 2
+		[[ "${1}" =~ ^(NO|TOO) ]] && tput setaf 1
+		[[ "${1}" =~ ^(n/a) ]] && tput setaf 3
+		echo -n "${1}"
+		tput sgr0 
+	}
+	# export to fzf for --preview
+	export -f _cStat
+	# validate the name first
+	if [[ ${#1} -lt ${_minLength} ]]; then
+		lengthStatus="TOO SHORT"
+		avail="n/a"
+	elif [[ ${#1} -gt ${_maxLength} ]]; then
+		lengthStatus="TOO LONG"
+		avail="n/a"
+	else
+		lengthStatus="OK"
+		 _doesSourceExist "${1}" && { avail="NO"; acceptable="NO"; } || { avail="YES"; acceptable="YES"; }
+	fi
+	[[ "${1}" =~ ^[[:lower:]|[:digit:]] ]] && lead="YES" || { lead="NO" ; acceptable="NO" ; }
+	[[ "${1}" =~ [[:lower:]|[:digit:]]$ ]] && last="YES" || { last="NO" ; acceptable="NO" ; }
+	[[ "${1}" =~ ^([[:lower:]|[:digit:]]|[-_.])*$ ]] && allowedChars="YES" || { allowedChars="NO" ; acceptable="NO" ; }
+	[[ ! "${1}" =~ ([.]|[-]|[_]){2} ]] && repeat="YES" || { repeat="NO" ; acceptable="NO" ; }
+	# print the validation info into the fzf preview window	
+	echo "----VALID NAME?  $(_cStat ${acceptable}) --------------"
+	[[ -z "${1}" ]] && echo "waiting for input..." || echo "name: '${1}'"
+	printf "length [%.2d]: %31s\n" ${#1} "$(_cStat "${lengthStatus}")"
+	printf "unique: %36s\n" "$(_cStat "${avail}")"
+	printf "character set allowed: %21s\n" "$(_cStat "${allowedChars}")"
+	printf "first ['%s'] allowed: %23s\n" "${1:0:1}" "$(_cStat "${lead}")"
+	printf "last ['%s'] allowed: %24s\n" "${1:(-1)}" "$(_cStat "${last}")"
+	printf "no non-alpha/num repeats: %18s\n" "$(_cStat "${repeat}")"
+	echo "-----------RULES------------------"
+	echo "the name must be unique"
+	echo "max length is ${_maxLength}, min is ${_minLength}"
+	echo "lower case and numbers only"
+	echo "non alpha-numeric characters allowed:"
+	echo " - dash (-)"
+	echo " - underscore (_)"
+	echo " - dot (.)"
+	echo " ^ these cannot be first or last"
+	echo " ^ cannot be repeated (eg --)"
+	echo
+	echo "------SELECTED SOURCE DESCRIPTION------------"
+	[[ -z "${2}" ]] && echo "free" || cat "${_HOME}/${2}/.description"
+}
+# export above function to fzf for --preview
+export -f _validateSourceName
+
+# usage:
+# _namePicker _newName   _getSourceList _validateNamePreview "prompt"    "special notes"
+# (function)  (nameref)     (fzf feed)      (fzf preview)     fxf prompt  (fzf header)    
+_namePicker () {
+	# $1 = nameref for return value
+	# $2 = input function (prints the list of existing whatever)
+	# $3 = validation function for fzf preview window
+	# $4 = prompt string
+	# $5 = optional special instructions
+	# basically an fzf wrapper for name selection to be used globally
+	# the fzf preview does not enforce...only advises
+	# single level only and single selection
+	local -n _return=$1
+	local _input=$2
+	local _preview=$3
+	local _prompt=$4
+	local _instructions="${5:-existing above, guidance right >}"
+	while true; do
+		_newName=$(fzf \
+			--no-multi \
+			--no-mouse \
+			--ansi \
+			--print-query \
+			--exact \
+			--info="hidden" \
+			--prompt="${_prompt}>" \
+			--header="${_instructions}" \
+			--bind="start:reload(${_input})" \
+			--bind="ctrl-c:abort" \
+			--bind="backward-eof:abort" \
+			--bind="tab:replace-query+first" \
+			--bind="esc:abort" \
+			--preview="${_preview} {q} {}" \
+			--preview-window=50% 
+		);
+			# the selection decision
+			# we have the query term (what is typed)
+			# we have the selected term (the best match...or the selected with arrow)
+			# in some cases we want the query term
+			# in other cases we want the selected
+			# we always need both
+			# there will always be both
+			#--bind="enter:replace-query+first+print-query" \
+			# change
+			# type 'lgb'
+			# arrow to lgb-12-nov-23
+			# returns lgb (INCORRECT...we want the selected)
+			# new
+			# type 'lgb'
+			# returns lgb (CORRECT...we want the query)
+			# a simple check for empty query does not suffice
+			# it seems we need to return both, perhaps as "query:selected"
+			# this way we can use logic appropriate to the context to choose
+		query=$(echo "${_newName}" | head -n1)
+		selection=$(echo "${_newName}" | tail -n1)
+		#_debug "query is '${query}'"
+		#_debug "selection is '${selection}'"
+		_return="${query}:${selection}"
+		#[[ -z "${query}" ]] && _returnName="${selection}" || _returnName="${query}"
+		break
+	done
+}
+
+_getSourceDetails() {
+	local _newSourceName=$1
+	[[ ${_newSourceName} = $(_getSource) ]] && return
+	echo -e $(_ask "enter a description for '${_newSourceName}' ?=help q=abort")
+	while read -r -e -p "$(_ask ": ")" _newSourceDescription; do
+		case "${_newSourceDescription}" in
+			help|h|\?)
+				_info "enter a description for '${_newSourceName}'"
+				_info "example: little green notebook 12 Jan 2023" 
+				_info "example: lecture notes from chem 202"
+				_info "note: the description can be changed later"
+				_info "    : multiple lines can be added later as well"
+				_info "usage: q to abort, h for this help."
+				_info "enter a description for '${_newSourceName}'"
+				;;
+			quit|q)
+				_warn "aborting; '${_newSourceName}' not added. try again later"
+				return
+				;;
+			*)
+				[[ -z ${_newSourceDescription} ]] && { _warn "empty description not allowed"; continue; } 
+				[[ ${_newSourceDescription} =~ ^[[:alnum:]] ]] || { _warn "use your words"; continue; }
+				break
+				;;
+		esac
+	done
+	[[ -z ${_newSourceDescription} ]] && { _warn "empty description not allowed"; return; } 
+	while read -r -e -n1 -p "$(_ask "save '${_newSourceName}' as a new source? (y/n)") " _c; do
+		case ${_c} in
+			y)
+				_saveSource "${_newSourceName}" "${_newSourceDescription}"
+				break
+				;;
+			n)
+				return
+				;;
+			*)
+				continue
+				;;
+		esac
+	done
+	while read -r -e -n1 -p "$(_ask "set '${_newSourceName}' as current? (y/n) ") " _d; do
+		case ${_d} in
+			y)
+				_setSource "${_newSourceName}"
+				return
+				;;
+			n)
+				return
+				;;
+			*)
+				continue
+				;;
+		esac
+	done
+}
+
+_previewSource() {
+	# used by fzf during source change...shows description and entity count
+	[[ -z ${2} ]] && { echo "source does not exist"; return; }
+	echo "source: $2"
+	echo "entries: $(_getSourceCount $2)"
+	echo
+	echo "----DESCRIPTION-------------------"
+	cat "${_HOME}/${2}/.description"
+}
+export -f _previewSource
+
+_isSourceNameValid() {
+	local _maxLength=25
+	local _minLength=1
+	# arg 1 = source name
+	if [[ "${1}" =~ ^([[:lower:]|[:upper:]|[:digit:]]|[-_.]){${_minLength},${_maxLength}}$ ]]; then
+		[[ "${1}" =~ ^[[:lower:]|[:digit:]] ]] || return 1
+		[[ "${1}" =~ [[:lower:]|[:digit:]]$ ]] || return 1
+		[[ "${1}" =~ ([.]|[-]|[_]){2} ]] && return 1
+		if _doesSourceExist "${1}"; then
+			_warn "'${1}' is not new"
+			return 1
+		else
+			return 0
+		fi
+	else
+		_warn "'${1}' is not allowed, try again"
+		_warn "rules: a-z A-Z 0-9 _ - . allowed; no spaces allowed"
+		_warn "rules: max length ${_maxLength} characters, min is ${_minLength}"
+		return 1
+	fi
+}
+
+_mergeSource() {
+	_current=${_currentSource}
+	_namePicker _mergeWhat _getSourceList _previewSource "WHAT" "merge into '$_current'" || return
+	[[ ${_mergeWhat} = ":" ]] && { _warn "merge aborted"; return; }
+	# separate the return
+	_query=${_mergeWhat%%:*}
+	_selection=${_mergeWhat#*:}
+	_debug "query is '${_query}'"
+	_debug "selection is '${_selection}'"
+	# if query is empty and selection exists, use it 
+	[[ -z "${_query}" ]] && _doesSourceExist "${_selection}" \
+		&& _what=${_selection}
+	# if query is not empty and it matches a source, use that
+	if [[ ! -z "${_query}" ]]; then
+		if [[ "${_query}" = "${_selection}" ]]; then
+			# user did not use arrow to select, use _query
+	 		_doesSourceExist "${_query}" && _what=${_query}
+		else
+			# query and selection do not match...user selected
+	 		_doesSourceExist "${_selection}" && _what=${_selection}
+		fi
+	fi
+	# if query is not empty and it does not match a source, use selection
+	# if it exists
+	if [[ ! -z "${_query}" ]] && ! _doesSourceExist "${_query}"; then
+		if _doesSourceExist "${_selection}"; then
+		 	_what=${_selection}
+		else
+			_warn "'${selection}' does not exist; cannot merge from nothing"
+			return
+		fi
+	fi
+	[[ ${_what} = ${_current} ]] && { _warn "cannot merge into self"; return; }
+	[[ $(_getSourceCount ${_what}) = 0 ]] && { _warn "cannot merge from empty source"; return; }
+	read -rsn1 -p $(_ask "merge '${_what}' into '${_current}' ? [y/n]") _yn
+ 	echo
+ 		[[ ${_yn} != "y" ]] && { _warn "merge aborted"; return; }
+	_debug "now merge '${_what}' into '${_current}'"
+	# git mv all 
+	git -C "${_HOME}" --git-dir="${_GITDIR}" mv "${_HOME}/${_what}/"* "${_HOME}/${_current}"
+	# then remove if not default
+	[[ ${_what} != "default" ]] && git -C "${_HOME}" rm -rq "${_HOME}/${_what}"
+	# then commit
+ 	git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] merged ${_what} into ${_current}"
+}
+
+_newSource() {
+	_namePicker _newSource _getSourceList _validateSourceName "NEW" "choose a new source name" || continue
+	# always use the query here
+	_newSource=${_newSource%%:*}
+	[[ -z "${_newSource}" ]] && { _warn "empty names not allowed"; return; }
+	_isSourceNameValid "${_newSource}" || { _error "'${_newSource}' is invalid"; return; }
+	_getSourceDetails "${_newSource}"
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/${_newSource}/.description"
+  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] added ${_newSource}"
+}
+
+_changeSource() {
+	_namePicker _changeTo _getSourceList _previewSource	"FILTER" "change to selected" || return
+	[[ ${_changeTo} = ":" ]] && { _warn "change source aborted"; return; }
+	# separate the return
+	_query=${_changeTo%%:*}
+	_selection=${_changeTo#*:}
+	#_debug "query is '${_query}'"
+	#_debug "selection is '${_selection}'"
+	# if query is empty and selection exists, do it
+	[[ -z "${_query}" ]] && _doesSourceExist "${_selection}" \
+		&& { _setSource "${_selection}"; return; }
+	# if query is not empty and it matches a source, use that
+	if [[ ! -z "${_query}" ]]; then
+		if [[ "${_query}" = "${_selection}" ]]; then
+			# user did not use arrow to select, use _query
+	 		_doesSourceExist "${_query}" && { _setSource "${_query}"; return; }
+		else
+			# query and selection do not match...user selected
+	 		_doesSourceExist "${_selection}" && { _setSource "${_selection}"; return; }
+		fi
+	fi
+	# if query is not empty and it does not match a source, use selection
+	# if it exists
+	if [[ ! -z "${_query}" ]] && ! _doesSourceExist "${_query}"; then
+		if _doesSourceExist "${_selection}"; then
+		 	_setSource "${_selection}"; return
+		else
+			_warn "'${selection}' does not exist; use N to create new source"
+			return
+		fi
+	fi
+}
+
+_renameSource() {
+	_current=${_currentSource}
+	[[ "${_current}" = "default" ]] && { _warn "cannot rename 'default'"; return; }
+	_namePicker _newName _getSourceList _validateSourceName "NEW-NAME" "rename '$_current'" || return
+	[[ ${_newName} = ":" ]] && { _warn "rename source aborted"; return; }
+	# always use the query here
+	_newName=${_newName%%:*}
+	[[ -z ${_newName:-} ]] && { _warn "empty names not allowed"; return; }
+	_isSourceNameValid "${_newName}" || { _error "'${_newName}' is invalid"; return; }
+	_doesSourceExist "${_newName}" && { _warn "${_newName} exists"; return; }
+ 	git -C "${_HOME}" --git-dir="${_GITDIR}" mv "${_HOME}/${_current}" "${_HOME}/${_newName}"
+ 	git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] renamed ${_current} to ${_newName}"
+	_setSource "${_newName}"
+}
+
+_deleteSource() {
+	_state=empty
+	_current=${_currentSource}
+	[[ "${_current}" = "default" ]] && { _warn "cannot delete 'default'"; return; }
+	[[ $(_getSourceCount ${_current}) != 0 ]] && \
+		{ _warn "'${_current}' is not empty"; _state=non-empty; }
+	read -rsn1 -p $(_ask "delete ${_state} '${_current}' ? [y/n]") _yn
+ 	echo
+ 	[[ ${_yn} != "y" ]] && { _warn "delete aborted"; return; }
+	git -C "${_HOME}" rm -rq "${_HOME}/${_current}"
+ 	git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] deleted ${_state} ${_current}"
+	_setSource "default"
+}
+
+########################
+# SEARCH
+########################
+
+_search() {
+	#local _fzfColor="--color=bg:#222222,preview-bg:#333333,header:yellow"
+	#rg --files --hidden --glob '!.git' --glob '!.current' --glob '!.description' "${_selfDirPath}" | fzf \
+	#	${_fzfColor}
+	cd "${_HOME}"
+	rm -f /tmp/rg-fzf-{r,f}
+	RG_PREFIX="rg --column --line-number --no-heading --color=always --smart-case "
+	INITIAL_QUERY="${*:-}"
+	find "${_HOME}/${_currentSource}" -type f | fzf --ansi --disabled --query "$INITIAL_QUERY" \
+    --bind "start:reload($RG_PREFIX {q})+unbind(ctrl-r)" \
+    --bind "change:reload:sleep 0.1; $RG_PREFIX {q} || true" \
+    --bind "ctrl-f:unbind(change,ctrl-f)+change-prompt(2. fzf> )+enable-search+rebind(ctrl-r)+transform-query(echo {q} > /tmp/rg-fzf-r; cat /tmp/rg-fzf-f)" \
+    --bind "ctrl-r:unbind(ctrl-r)+change-prompt(1. ripgrep> )+disable-search+reload($RG_PREFIX {q} || true)+rebind(change,ctrl-f)+transform-query(echo {q} > /tmp/rg-fzf-f; cat /tmp/rg-fzf-r)" \
+    --color "hl:-1:underline,hl+:-1:underline:reverse" \
+    --prompt '1. ripgrep> ' \
+    --delimiter : \
+    --header '╱ CTRL-R (ripgrep mode) ╱ CTRL-F (fzf mode) ╱' \
+    --preview 'batcat --color=always {1} --highlight-line {2}' \
+    --preview-window 'up,60%,border-bottom,+{2}+3/3,~3' \
+    --bind 'enter:become(germ edit {1} +{2})'
+}
+
+########################
+# BROWSE
+########################
+
+_browse() {
+	# arg 1 = source
+	local _entityList
+	local _editRequest
+	local _fzfColor="--color=bg:#222222,preview-bg:#333333,header:yellow"
+	export _entityList=($(_printSourceEntities ${_currentSource}))
+	[[ ${#_entityList[@]} = 0 ]] && { _warn "nothing to see"; return; }
+	_fzfWrapper() {
+	while true; do
+		_fzfReturn=$(ls "${_HOME}/${_currentSource}" | fzf \
+	 		${_fzfColor} \
+			--no-mouse \
+			--print-query \
+			--preview-window=75% \
+			--preview 'cat ${_HOME}/${_currentSource}/{}' \
+		);
+		[[ ! ${_fzfReturn} ]] && break
+		# now look at what is returned
+    _lines=$(echo "${_fzfReturn}" | wc -l)
+    _query=$(echo "${_fzfReturn}" | head -n1)
+    _selection=$(echo "${_fzfReturn}" | tail -n1)
+    # strip everything but name
+    _selection=${_selection##*/}
+    # look for a query name without selection (new name without any match)
+    [[ ${_lines} == 1 ]] && { echo ${_query}; break; }
+    # multi-line return evaluation
+    # if query is empty then we only have selection
+    [[ -z ${_query} ]] && { echo ${_selection}; break; }
+    # if query and selection are the same, easy
+    [[ ${_query} == ${_selection} ]] && { echo ${_query}; break; }
+    # if query and selection are not the same...use query
+    [[ ${_query} != ${_selection} ]] && { echo ${_query}; break; }
+    # the above creates the minor annoyance that one must use TAB to populate
+    # the query...acceptable because i don't know how else to determine
+	done
+	}
+	_fzfWrapper
+}
+
+###############
+###### SHELL
+###############
+
+_shell() {
+	cd "${_HOME}" || { _error "can not enter ${_NAME}"; return 1; }
+	# set up shell history business
+	HISTFILE="${_HOME}/.${_NAME}_history"
+	HISTSIZE=1000
+	HISTFILESIZE=10000
+	HISTTIMEFORMAT="%s %F %T "
+	HISTCONTROL=ignoreboth
+	shopt -s histappend
+	set -o history
+	# here would be the right place to lock the session
+	## SESSION-LOCK
+	# and keep session timers and counters
+	# set the current source
+	export _currentSource=$(_getSource)
+	# the splash welcome
+	_displayWelcome() {
+	cat <<HEREDOC
+  __  ___  ___   __  __ 
+ / _)(  _)(  ,) (  \/  )
+( (/\ ) _) )  \  )    ( 
+ \__/(___)(_)\_)(_/\/\_)
+
+      type ${green}h${reset} for help
+      type ${red}q${reset} to quit
+
+HEREDOC
+	}
+	# the main menu
+	_printMenu() {
+		printf '\n'
+		printf ':-----germ commands------------------------------------------------------------o\n'
+		printf '\n'
+		printf '  H   how to use                      == current source %s ==== \n' "${_currentSource}"
+		printf '  a   add new (editor)                 c  change current                       .\n'
+		printf '  f   fast add (no editor)             N  create new                           .\n'
+		printf '  e   edit                             R  rename current                       .\n'
+		printf '  b   browse                           M  merge (other into current)           .\n'
+		printf '                                       D  delete current                        \n'
+		printf '                                       P  print description                    .\n'
+		printf '                                       E  edit description                     .\n'
+		printf '                                       S  split (future)                        \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  \n'
+		printf '                                         ===========debug etc==============\n'
+		printf '                                         ctrl-x toggle bash debug (set -x) \n'
+		printf '                                         ctrl-b toggle germ debug          \n'
+		printf '                                         0 print env                       \n'
+		printf '                                         ctrl-g git status                 \n'
+		printf '  q   quit %s\n' ${_NAME}
+		printf '.  *insert msg*                                                                .\n'
+	}
+	_printGuidance() {
+		printf '\n'
+		printf ':-----germ usage guide---------------------------------------------------------o\n'
+		printf '\n'
+		printf ' in the simplest form, there is one "notebook" aka "source"  \n'
+		printf '  which is called "default"                                                    .\n'
+		printf '    use a) to add a new note to the current source                             .\n'
+		printf '  \n'
+		printf '  \n'
+		printf '  to use and manipulate multiple "notebooks" use the source commands           .\n'
+		printf '   N creates new notebook names                                                .\n'
+		printf '   R renames the current                                                        \n'
+		printf '   M allows one to merge the contents of one source into the current           .\n'
+		printf '            it also deletes the now empty other source                         .\n'
+		printf '   D deletes the current source (even if it is not empty!)          \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  the default notebook cannot be renamed or removed  \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  q   quit %s\n' ${_NAME}
+		printf '.  *insert msg*                                                                .\n'
+	}
+	# the prompt and interpreter
+	_mainPrompt() {
+		trap '' SIGQUIT SIGTSTP SIGINT SIGTERM
+		_p() {
+			local _cs=${_currentSource}
+			# set the prompt
+			reset=$'\001\e[0m\002'
+			_cH=$'\001\e[00;45m\002'		#home
+			_cG=$'\001\e[00;7m\002'			#germ
+			_cU=$'\001\e[00;32m\002'		#user
+			_cS=$'\001\e[00;33m\002'		#source
+			_dirty="${green}o${reset}"
+			_isIndexClean || _dirty="${red}-${reset}"
+			echo -n "${_cH}${_MASTER}${reset}:${_cG}${_NAME}${reset} ${_cU}${_USERNAME}${reset} [${_cS}${_cs}${reset}] ${_dirty} > "
+		}
+		_displayWelcome
+		local __input
+		while read -rsn1 -p "$(_p)" __input || true; do
+			echo
+			case ${__input} in
+				h|\?)
+					_printMenu
+					;;
+				H)
+					_printGuidance
+					;;
+				a)
+					_add || :
+					;;
+				f)
+					# fast (editor-free) add
+					;;
+				e)
+					_edit || :
+					;;
+				b)
+					_browse || :
+					;;
+				c|C)
+					_changeSource || :
+					;;
+				N)
+					_newSource || :
+					;;
+				R)
+					_renameSource || :
+					;;
+				M)
+					_mergeSource || :
+					;;
+				D)
+					_deleteSource || :
+					;;
+				S)
+					_debug "split requires multi-select fzf function"
+					;;
+				E)
+					# edit source description
+					nano "${_HOME}/${_currentSource}/.description"
+  				git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/${_currentSource}/.description"
+  				git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] updated '${_currentSource}' description"
+					;;
+				P)
+					_info "current source: ${_currentSource}"
+					_info "entries       : $(_getSourceCount ${_currentSource})"
+					_info "description   : $(cat ${_HOME}/${_currentSource}/.description)"
+					_info "entities      : $(_printSourceEntities ${_currentSource})"
+					;;
+				$'\x18')
+					# toggle bash set -x debug with ctrl-x
+					[[ $- == *x* ]] && set +x || set -x
+					;;
+				$'\x02')
+					# toggle script _DEBUG with ctrl-B
+					[ $_DEBUG = "true" ] && _DEBUG=false || _DEBUG=true
+					_debug "debug on"
+					;;
+				$'\x07')
+					# run git status
+  				git -C "${_HOME}" --git-dir="${_GITDIR}" status
+					;;
+				0)
+					printenv | grep "^_"
+					;;
+				t)
+					_inspect
+					;;
+				q)
+					return
+					;;
+				$'\e')
+					# ignore all escape sequences
+					_debug "esc"
+					# eat anything there
+					read -rsn8 -t .002 _escape || continue
+					_debug "esc $_escape"
+					;;
+				$'\04')
+					# read ctrl-d
+					_warn "use 'q' to quit"
+					;;
+			esac
+		done
+	}
+	_mainPrompt
+}
+
+main() {
+	# read all the poositional parameters
+  _getOpts "${@}"
+  # setup the environment after processing all command line parameters
+  _setEnv
+  # validate the environment (external tools required)
+  _checkExternalTools || { _error "cannot run until these problems are resolved"; return 1; }
+  # check for the working directory
+  _checkHome || { _error "cannot run without a working environment"; return 1;  }
+  # enter custom shell if no arguments
+  [ -z "${_subCommand:-}" ] && _shell
+  # otherwise, pass the commands to the called "command"
+  [[ -n "${_subCommand:-}" ]] && _debug "now calling the eval to run '${_subCommand:-}'"
+  [[ -n "${_subCommand:-}" ]] && eval _"${_subCommand}" || :
+}
+main "${@}"
