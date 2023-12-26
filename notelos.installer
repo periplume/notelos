@@ -430,7 +430,12 @@ _install() {
 _upgrade() {
 	_checkInstalled || { _error "no pre-existing installation found"; exit 1; }
 	_warn "found $(cat ${_notelosHOME}/.git/description) already"
-	echo "upgrade me"
+	# put the binary files in place
+	for _file in $(ls "${_notelosLAB}/bin"); do
+		_installFile "${_notelosLAB}/bin/${_file}" "${_notelosBIN}/${_file}"
+		_debug "installed ${_file}"
+	done
+	_debug "upgrade succeeded"
 	exit
 }
 

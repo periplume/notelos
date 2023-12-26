@@ -59,3 +59,8 @@ z=  - suggest words
 zg  - add to local dictionary
 zw  - marks word as incorrect
 
+xp transpose current char with next
+
+insert greek characters
+ctrl-v uXXXX (where 03B1 is alpha)
+

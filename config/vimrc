@@ -11,6 +11,9 @@ let g:minimap_auto_start_win_enter = 0
 " necessary for weird reasons (because we use -u <VIMRC>)
 set nocompatible
 
+" make backspace behave as you would expect
+set backspace=indent,eol,start
+
 " disable ex mode (avoid entering by accidental Q...we don't need ex mode ever)
 noremap Q <Nop>
 
@@ -160,20 +163,30 @@ imap <c-d> <esc>diwA
 " reverse last two characters and return to end of line
 imap <c-r> <esc>XpA
 
+
 " cursor color
 if &term =~ "xterm\\|rxvt"
-  " use a red cursor in insert mode
-  let &t_SI = "\<Esc>]12;red\x7"
-  " use a green cursor otherwise
-  let &t_EI = "\<Esc>]12;cyan\x7"
-  silent !echo -ne "\033]12;cyan\007"
+  " insert mode: red blinking block
+  let &t_SI = "\033]12;red\x7"
+  let &t_SI .= "\e[1 q"
+  " replace mode: red solid block
+  let &t_SR = "\033]12;red\x7"
+  let &t_SR .= "\e[2 q"
+  " use a green solid block cursor otherwise
+  let &t_EI = "\033]12;green\x7"
+  let &t_EI .= "\e[2 q"
+  silent !echo -ne "\033]12;green\007"
   " reset cursor when vim exits
   autocmd VimLeave * silent !echo -ne "\033]112\007"
 endif
+
+
+
 " set fast cursor switching
 set ttimeout
 set ttimeoutlen=1
 set ttyfast
+
 
 " kep mappings
 map = dd

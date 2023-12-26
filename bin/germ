@@ -232,6 +232,7 @@ _setEnv() {
 		_SILENT=${_notelosSILENT}
 		_USERNAME=${_notelosUSERNAME}
 		_USEREMAIL=${_notelosUSEREMAIL}
+		_EDITOR=_notelosEdit
 	else
 		# set up standalone mode
 		_MASTER=self
@@ -240,7 +241,6 @@ _setEnv() {
 		_HOME=${_BASE}/${_NAME}
 		_GITDIR="${_HOME}/.git"
 		_LOGFILE="${_BASE}/${_NAME}.log"
-		_EDITOR=_notelosEdit
 		# inherit these
 		_DEBUG=${_DEBUG:-false}
 		_LOG=${_LOG:-false}
@@ -368,12 +368,6 @@ _inspect() {
 
 _add() {
 	# add a new entry
-	# important things
-	# path to working project directory = ${_selfDirPath}
-	# current source = ${_currentSource}
-	# file name = $(_getNewKey)
-	# whether this is interactive or coming in from stdin: ${_inline} (boolean)
-	# the editor command to use
 	local _currentSource=$(_getSource)
 	local _dir="${_HOME}/${_currentSource}"
 	local _key=$(_getNewKey)
@@ -390,8 +384,6 @@ _add() {
 		fi
 	else
 		[ -p /dev/stdin ] && { _error "use 'add -i' for pipe input"; return 1; }
-		#eval ${_EDITOR} "${_file}"
-		#_notelosEdit "${_file}"
 		${_EDITOR} "${_file}"
 	fi
 	[[ -e "${_file}" ]] || return
@@ -412,26 +404,7 @@ _getNewKey() {
 	echo "$(date +%s.%N)"
 }
 
-_edit() {
-	# launch picker to select what to edit
-	local _currentSource=$(_getSource)
-	local _dir="${_HOME}/${_currentSource}"
-	local _key=$(_browse)
-	local _file="${_dir}/${_key}"
-	[[ -z "${_file}" ]] && { _warn "nothing selcted"; return; }
-	#eval "${_EDITOR}" "${_file}"
-	#_notelosEdit "${_file}"
-	${_EDITOR} "${_file}"
-	# test for changes
-  git -C "${_HOME}" --git-dir="${_GITDIR}" diff --quiet --exit-code "${_file}" && return
-	_commitMsgString=$(_buildCommitMsg "$(cat "${_file}")")
-	# save file and commit
-	_doCommit "${_currentSource}/${_key}" "[edit in ${_currentSource}] ${_commitMsgString}"
-}	
-
-
 _buildCommitMsg() {
-	#TODO strict IFS breaks this!!
 	# arg 1 = string [required]
 	# read string (the whole blob) line by line
 	# construct git commit message string (combining lines until max exceeded)
@@ -624,7 +597,7 @@ _validateSourceName(){
 	echo " ^ these cannot be first or last"
 	echo " ^ cannot be repeated (eg --)"
 	echo
-	echo "------SELECTED SOURCE DESCRIPTION------------"
+	echo "------SELECTED SOURCE DESCRIPTION-----------"
 	[[ -z "${2}" ]] && echo "free" || cat "${_HOME}/${2}/.description"
 }
 # export above function to fzf for --preview
@@ -636,11 +609,10 @@ export -f _validateSourceName
 _namePicker () {
 	# $1 = nameref for return value
 	# $2 = input function (prints the list of existing whatever)
-	# $3 = validation function for fzf preview window
+	# $3 = validation function for fzf preview window (in which $1=query $2=selection)
 	# $4 = prompt string
 	# $5 = optional special instructions
 	# basically an fzf wrapper for name selection to be used globally
-	# the fzf preview does not enforce...only advises
 	# single level only and single selection
 	local -n _return=$1
 	local _input=$2
@@ -659,36 +631,17 @@ _namePicker () {
 			--header="${_instructions}" \
 			--bind="start:reload(${_input})" \
 			--bind="ctrl-c:abort" \
-			--bind="backward-eof:abort" \
+			--bind="backward-eof:change-header(${_instructions} [ESC TO EXIT])" \
 			--bind="tab:replace-query+first" \
 			--bind="esc:abort" \
 			--preview="${_preview} {q} {}" \
-			--preview-window=50% 
+			--preview-window=60%,wrap
 		);
-			# the selection decision
-			# we have the query term (what is typed)
-			# we have the selected term (the best match...or the selected with arrow)
-			# in some cases we want the query term
-			# in other cases we want the selected
-			# we always need both
-			# there will always be both
-			#--bind="enter:replace-query+first+print-query" \
-			# change
-			# type 'lgb'
-			# arrow to lgb-12-nov-23
-			# returns lgb (INCORRECT...we want the selected)
-			# new
-			# type 'lgb'
-			# returns lgb (CORRECT...we want the query)
-			# a simple check for empty query does not suffice
-			# it seems we need to return both, perhaps as "query:selected"
-			# this way we can use logic appropriate to the context to choose
 		query=$(echo "${_newName}" | head -n1)
 		selection=$(echo "${_newName}" | tail -n1)
 		#_debug "query is '${query}'"
 		#_debug "selection is '${selection}'"
 		_return="${query}:${selection}"
-		#[[ -z "${query}" ]] && _returnName="${selection}" || _returnName="${query}"
 		break
 	done
 }
@@ -760,6 +713,19 @@ _previewSource() {
 	cat "${_HOME}/${2}/.description"
 }
 export -f _previewSource
+
+_previewEntry() {
+	# used by fzf during edit to display the germ 
+	#echo "query    : $1"
+	#echo "selection: $2"
+	#echo "----entity contents below---------"
+	if [[ -z "${2}" ]]; then
+		echo "no such entity"
+	else
+		cat "${_HOME}/${_currentSource}/${2}"
+	fi
+}
+export -f _previewEntry
 
 _isSourceNameValid() {
 	local _maxLength=25
@@ -888,6 +854,30 @@ _renameSource() {
 	_setSource "${_newName}"
 }
 
+_edit() {
+	# launch picker to select what to edit
+	local _current=${_currentSource}
+	[[ $(_getSourceCount ${_current}) = 0 ]] && { _warn "'${_current}' is empty"; return; }
+	_namePicker _what "_printSourceEntities ${_current}" _previewEntry "${_current}" "chose what to edit" || return
+	[[ ${_what} = ":" ]] && { _warn "edit aborted"; return; }
+	# always use the selection
+	_file=${_what#*:}
+	# edit
+	${_EDITOR} "${_HOME}/${_current}/${_file}"
+	# test for changes
+  git -C "${_HOME}" --git-dir="${_GITDIR}" diff --quiet --exit-code "${_HOME}/${_current}/${_file}" && return
+	_commitMsgString=$(_buildCommitMsg "$(cat "${_HOME}/${_current}/${_file}")")
+	# save file and commit
+	_doCommit "${_HOME}/${_current}/${_file}" "[edit in ${_current}] ${_commitMsgString}"
+}
+
+_browse() {
+	local _current=${_currentSource}
+	[[ $(_getSourceCount ${_current}) = 0 ]] && { _warn "'${_current}' is empty"; return; }
+	_c=${_currentSource}
+	_namePicker _w "_printSourceEntities ${_c}" _previewEntry "${_c}" "esc to quit" || return
+}
+
 _deleteSource() {
 	_state=empty
 	_current=${_currentSource}
@@ -907,11 +897,7 @@ _deleteSource() {
 ########################
 
 _search() {
-	#local _fzfColor="--color=bg:#222222,preview-bg:#333333,header:yellow"
-	#rg --files --hidden --glob '!.git' --glob '!.current' --glob '!.description' "${_selfDirPath}" | fzf \
-	#	${_fzfColor}
 	cd "${_HOME}"
-	rm -f /tmp/rg-fzf-{r,f}
 	RG_PREFIX="rg --column --line-number --no-heading --color=always --smart-case "
 	INITIAL_QUERY="${*:-}"
 	find "${_HOME}/${_currentSource}" -type f | fzf --ansi --disabled --query "$INITIAL_QUERY" \
@@ -926,49 +912,6 @@ _search() {
     --preview 'batcat --color=always {1} --highlight-line {2}' \
     --preview-window 'up,60%,border-bottom,+{2}+3/3,~3' \
     --bind 'enter:become(germ edit {1} +{2})'
-}
-
-########################
-# BROWSE
-########################
-
-_browse() {
-	# arg 1 = source
-	local _entityList
-	local _editRequest
-	local _fzfColor="--color=bg:#222222,preview-bg:#333333,header:yellow"
-	export _entityList=($(_printSourceEntities ${_currentSource}))
-	[[ ${#_entityList[@]} = 0 ]] && { _warn "nothing to see"; return; }
-	_fzfWrapper() {
-	while true; do
-		_fzfReturn=$(ls "${_HOME}/${_currentSource}" | fzf \
-	 		${_fzfColor} \
-			--no-mouse \
-			--print-query \
-			--preview-window=75% \
-			--preview 'cat ${_HOME}/${_currentSource}/{}' \
-		);
-		[[ ! ${_fzfReturn} ]] && break
-		# now look at what is returned
-    _lines=$(echo "${_fzfReturn}" | wc -l)
-    _query=$(echo "${_fzfReturn}" | head -n1)
-    _selection=$(echo "${_fzfReturn}" | tail -n1)
-    # strip everything but name
-    _selection=${_selection##*/}
-    # look for a query name without selection (new name without any match)
-    [[ ${_lines} == 1 ]] && { echo ${_query}; break; }
-    # multi-line return evaluation
-    # if query is empty then we only have selection
-    [[ -z ${_query} ]] && { echo ${_selection}; break; }
-    # if query and selection are the same, easy
-    [[ ${_query} == ${_selection} ]] && { echo ${_query}; break; }
-    # if query and selection are not the same...use query
-    [[ ${_query} != ${_selection} ]] && { echo ${_query}; break; }
-    # the above creates the minor annoyance that one must use TAB to populate
-    # the query...acceptable because i don't know how else to determine
-	done
-	}
-	_fzfWrapper
 }
 
 ###############
@@ -1010,10 +953,10 @@ HEREDOC
 		printf '\n'
 		printf '  H   how to use                      == current source %s ==== \n' "${_currentSource}"
 		printf '  a   add new (editor)                 c  change current                       .\n'
-		printf '  f   fast add (no editor)             N  create new                           .\n'
+		printf '  f   fast add (one line, no editor)   N  create new                           .\n'
 		printf '  e   edit                             R  rename current                       .\n'
 		printf '  b   browse                           M  merge (other into current)           .\n'
-		printf '                                       D  delete current                        \n'
+		printf '  s   search                           D  delete current                        \n'
 		printf '                                       P  print description                    .\n'
 		printf '                                       E  edit description                     .\n'
 		printf '                                       S  split (future)                        \n'
@@ -1035,20 +978,20 @@ HEREDOC
 		printf '\n'
 		printf ' in the simplest form, there is one "notebook" aka "source"  \n'
 		printf '  which is called "default"                                                    .\n'
-		printf '    use a) to add a new note to the current source                             .\n'
-		printf '  \n'
-		printf '  \n'
+		printf '   press "a" to add a new note to the current source                           .\n'
+		printf '                                                                               .\n'
+		printf '                                                                               .\n'
 		printf '  to use and manipulate multiple "notebooks" use the source commands           .\n'
 		printf '   N creates new notebook names                                                .\n'
-		printf '   R renames the current                                                        \n'
+		printf '   R renames the current                                                       .\n'
 		printf '   M allows one to merge the contents of one source into the current           .\n'
 		printf '            it also deletes the now empty other source                         .\n'
-		printf '   D deletes the current source (even if it is not empty!)          \n'
+		printf '   D deletes the current source (even if it is not empty!)                     .\n'
 		printf '  \n'
 		printf '  \n'
 		printf '  \n'
 		printf '  \n'
-		printf '  the default notebook cannot be renamed or removed  \n'
+		printf '  the default notebook cannot be renamed or removed                            .\n'
 		printf '  \n'
 		printf '  \n'
 		printf '  \n'
@@ -1086,12 +1029,22 @@ HEREDOC
 					;;
 				f)
 					# fast (editor-free) add
+					echo -e $(_ask "add to '${_currentSource}' ENTER to accept")
+					read -r -p "$(_ask ": ")" _newEntry
+					[[ -z "${_newEntry}" ]] && continue
+					_key=$(_getNewKey)
+					_commitMsg=$(_buildCommitMsg "${_newEntry}")
+					echo "${_newEntry}" > "${_HOME}/${_currentSource}/${_key}"
+					_doCommit "${_HOME}/${_currentSource}/${_key}" "[add to ${_currentSource}] ${_commitMsg}"
 					;;
 				e)
 					_edit || :
 					;;
 				b)
 					_browse || :
+					;;
+				s)
+					_search || :
 					;;
 				c|C)
 					_changeSource || :
