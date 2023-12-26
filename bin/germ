@@ -240,14 +240,14 @@ _setEnv() {
 		_HOME=${_BASE}/${_NAME}
 		_GITDIR="${_HOME}/.git"
 		_LOGFILE="${_BASE}/${_NAME}.log"
+		_EDITOR=_notelosEdit
 		# inherit these
 		_DEBUG=${_DEBUG:-false}
 		_LOG=${_LOG:-false}
 		_SILENT=${_SILENT:-false}
 		_USERNAME=$(whoami)
 		_USEREMAIL="unknown"
-		#TODO hold while testing
-		#_EDITOR="vim -u $HOME/notelos/.config/vimrc"
+		_EDITOR=${EDITOR:-nano}
 	fi
   [[ -f "${_LOGFILE:-}" ]] && _LOGGING=true || _LOGGING=false
 	_debug "$(declare -p _MODE)"
@@ -391,7 +391,8 @@ _add() {
 	else
 		[ -p /dev/stdin ] && { _error "use 'add -i' for pipe input"; return 1; }
 		#eval ${_EDITOR} "${_file}"
-		_notelosEdit "${_file}"
+		#_notelosEdit "${_file}"
+		${_EDITOR} "${_file}"
 	fi
 	[[ -e "${_file}" ]] || return
 	_commitMsg=$(_buildCommitMsg "$(cat "${_file}")")
@@ -419,7 +420,8 @@ _edit() {
 	local _file="${_dir}/${_key}"
 	[[ -z "${_file}" ]] && { _warn "nothing selcted"; return; }
 	#eval "${_EDITOR}" "${_file}"
-	_notelosEdit "${_file}"
+	#_notelosEdit "${_file}"
+	${_EDITOR} "${_file}"
 	# test for changes
   git -C "${_HOME}" --git-dir="${_GITDIR}" diff --quiet --exit-code "${_file}" && return
 	_commitMsgString=$(_buildCommitMsg "$(cat "${_file}")")
@@ -775,8 +777,8 @@ _isSourceNameValid() {
 		fi
 	else
 		_warn "'${1}' is not allowed, try again"
-		_warn "rules: a-z A-Z 0-9 _ - . allowed; no spaces allowed"
-		_warn "rules: max length ${_maxLength} characters, min is ${_minLength}"
+		_info "rules: a-z A-Z 0-9 _ - . allowed; no spaces allowed"
+		_info "rules: max length ${_maxLength} characters, min is ${_minLength}"
 		return 1
 	fi
 }
