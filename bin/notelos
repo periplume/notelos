@@ -234,11 +234,13 @@ _setEnv() {
   _debug "${FUNCNAME[0]} _notelosDEBUG=${_notelosDEBUG}"
   _debug "${FUNCNAME[0]} _notelosSILENT=${_notelosSILENT}"
   _debug "${FUNCNAME[0]} _notelosLOG=${_notelosLOG}"
-	# set up the user name (from git)
+	# set up the user name and email (from git)
   if [[ -f "${_notelosGITDIR:-}/config" ]]; then
     _notelosUSERNAME=$(git -C "${_notelosGITDIR}" config --get user.name)
+    _notelosUSEREMAIL=$(git -C "${_notelosGITDIR}" config --get user.email)
   else
 		_notelosUSERNAME=$(git config --get user.name) || _notelosUSERNAME=$(whoami)
+		_notelosUSEREMAIL=$(git config --get user.email) || _notelosUSEREMAIL=unknown
   fi
   _debug "${FUNCNAME[0]} user name: '${_notelosUSERNAME}'"
 	# test the network (unless explicitly OFFLINE with -x switch)
