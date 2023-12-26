@@ -247,7 +247,7 @@ _setEnv() {
 		_USERNAME=$(whoami)
 		_USEREMAIL="unknown"
 		#TODO hold while testing
-		_EDITOR="vim -u $HOME/notelos/.config/vimrc"
+		#_EDITOR="vim -u $HOME/notelos/.config/vimrc"
 	fi
   [[ -f "${_LOGFILE:-}" ]] && _LOGGING=true || _LOGGING=false
 	_debug "$(declare -p _MODE)"
@@ -390,7 +390,8 @@ _add() {
 		fi
 	else
 		[ -p /dev/stdin ] && { _error "use 'add -i' for pipe input"; return 1; }
-		eval ${_EDITOR} "${_file}"
+		#eval ${_EDITOR} "${_file}"
+		_notelosEdit "${_file}"
 	fi
 	[[ -e "${_file}" ]] || return
 	_commitMsg=$(_buildCommitMsg "$(cat "${_file}")")
@@ -417,7 +418,8 @@ _edit() {
 	local _key=$(_browse)
 	local _file="${_dir}/${_key}"
 	[[ -z "${_file}" ]] && { _warn "nothing selcted"; return; }
-	eval "${_EDITOR}" "${_file}"
+	#eval "${_EDITOR}" "${_file}"
+	_notelosEdit "${_file}"
 	# test for changes
   git -C "${_HOME}" --git-dir="${_GITDIR}" diff --quiet --exit-code "${_file}" && return
 	_commitMsgString=$(_buildCommitMsg "$(cat "${_file}")")
