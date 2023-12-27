@@ -75,7 +75,6 @@ _printCommands() {
  edit                edit an existing germ entry
  create              create a new germ git database
  inspect             run tig on the germ git bare repo
- sizer               run github sizer tool on germ git bare repo
  search              interactive search
  browse              read through the current source entities
  source              add and manipulate source
@@ -618,7 +617,13 @@ _namePicker () {
 	local _input=$2
 	local _preview=$3
 	local _prompt=$4
-	local _instructions="${5:-existing above, guidance right >}"
+	export _instructions="${5:-existing above, guidance right >}"
+	_transHeader() {
+		# add a second line to the header with context-specific info in yellow
+		# $1 string message to insert
+		printf "%s\n[\033[38;5;11m%s\033[0m]" "${_instructions}" "${1}"
+	}
+	export -f _transHeader
 	while true; do
 		_newName=$(fzf \
 			--no-multi \
@@ -630,8 +635,10 @@ _namePicker () {
 			--prompt="${_prompt}>" \
 			--header="${_instructions}" \
 			--bind="start:reload(${_input})" \
-			--bind="ctrl-c:abort" \
-			--bind="backward-eof:change-header(${_instructions} [ESC TO EXIT])" \
+			--bind="ctrl-c:transform-header(_transHeader 'ESC to abort')" \
+			--bind="ctrl-q:transform-header(_transHeader 'ESC to abort')" \
+			--bind="ctrl-z:transform-header(_transHeader 'no ctrl-z')" \
+			--bind="backward-eof:transform-header(_transHeader 'ESC to abort')" \
 			--bind="tab:replace-query+first" \
 			--bind="esc:abort" \
 			--preview="${_preview} {q} {}" \
@@ -663,7 +670,7 @@ _getSourceDetails() {
 				;;
 			quit|q)
 				_warn "aborting; '${_newSourceName}' not added. try again later"
-				return
+				return 1
 				;;
 			*)
 				[[ -z ${_newSourceDescription} ]] && { _warn "empty description not allowed"; continue; } 
@@ -680,7 +687,7 @@ _getSourceDetails() {
 				break
 				;;
 			n)
-				return
+				return 1
 				;;
 			*)
 				continue
@@ -801,7 +808,7 @@ _newSource() {
 	_newSource=${_newSource%%:*}
 	[[ -z "${_newSource}" ]] && { _warn "empty names not allowed"; return; }
 	_isSourceNameValid "${_newSource}" || { _error "'${_newSource}' is invalid"; return; }
-	_getSourceDetails "${_newSource}"
+	_getSourceDetails "${_newSource}" || { _warn "aborted adding new source"; return; }
   git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/${_newSource}/.description"
   git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] added ${_newSource}"
 }
@@ -988,7 +995,7 @@ HEREDOC
 		printf '            it also deletes the now empty other source                         .\n'
 		printf '   D deletes the current source (even if it is not empty!)                     .\n'
 		printf '  \n'
-		printf '  \n'
+		printf '  commands operate on the current "source"\n'
 		printf '  \n'
 		printf '  \n'
 		printf '  the default notebook cannot be renamed or removed                            .\n'
@@ -1000,6 +1007,7 @@ HEREDOC
 	}
 	# the prompt and interpreter
 	_mainPrompt() {
+		# disallow use of ctrl-c etc
 		trap '' SIGQUIT SIGTSTP SIGINT SIGTERM
 		_p() {
 			local _cs=${_currentSource}
@@ -1029,7 +1037,7 @@ HEREDOC
 					;;
 				f)
 					# fast (editor-free) add
-					echo -e $(_ask "add to '${_currentSource}' ENTER to accept")
+					echo -e $(_ask "add to '${_currentSource}'; ENTER to accept")
 					read -r -p "$(_ask ": ")" _newEntry
 					[[ -z "${_newEntry}" ]] && continue
 					_key=$(_getNewKey)
@@ -1066,7 +1074,7 @@ HEREDOC
 					;;
 				E)
 					# edit source description
-					nano "${_HOME}/${_currentSource}/.description"
+					${_EDITOR} "${_HOME}/${_currentSource}/.description"
   				git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/${_currentSource}/.description"
   				git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] updated '${_currentSource}' description"
 					;;

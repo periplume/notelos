@@ -62,6 +62,9 @@ reset=$(tput sgr0)
 #_studioDEBUG=true
 
 #TODO print DEBUG to console on stderr
+#TODO change instantiation to _DEBUG only, allowing each module
+# to selectively turn on or off (ie override)...now the inheritance
+# is absolute and cannot be overridden
 ##################################################
 # LOGGING AND CONSOLE MESSAGES AND USER INTERFACE
 ##################################################

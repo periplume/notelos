@@ -1,11 +1,9 @@
-" studio specific vimrc
+" notelos specific vimrc
 "
-" write a function to check for Plug
-" if it exists, load it
-if exists(':Plug')
+" check for vim-plug...
+if exists(glob('~/.vim/autoload/plug.vim'))
 	call plug#begin()
-	Plug 'wxfr/minimap.vim'
-	PlugInstall 'wxfr/minimap.vim'
+	Plug 'https://github.com/wfxr/minimap.vim' { 'on': 'MinimapToggle' }
 	call plug#end()
 endif
 
