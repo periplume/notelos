@@ -11,6 +11,42 @@ set -o pipefail
 IFS=$'\n\t'
 
 #TODO
+_checkExternals() {
+	_required=(git fzf)
+	for _required in "${_required[@]}"; do
+		if command -v ${_required} &>/dev/null; then
+			_info "${_required} found"
+		else
+			_warn "${_required} not found"
+			_ask "install ${_required} ? [y/n] "
+			read -rsn1 _yn
+			[[ ${_yn} != "y" ]] && { _warn "${_required} will need to be installed"; break; }
+			_installExternals ${_required}
+			[[ $? = 0 ]] && _info "${_required} installed" || { _error "${_required} install failed"; return 1; }
+		fi
+	done
+}
+
+_installExternals() {
+	_what=$1
+	_temp=$(mktemp -d)
+	case $1 in
+		fzf)
+			_info "fetching fzf from github..."
+			git clone --depth 1 https://github.com/junegunn/fzf.git ~/lab/fzf 2>&1${_temp}/git_clone_fzf.out
+			[[ $? = 0 ]] && _info "done" || { _error "failed"; return 1; }
+			_info "installing fzf..."
+			~/lab/fzf/install --no-completion --no-key-bindings --update-rc 2>&1${_temp}/fzf_install.out
+			[[ $? = 0 ]] && _info "done" || { _error "failed"; return 1; }
+			;;
+		git)
+			_warn "no git installer yet"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
 # install cargo/rust  OPTION (to make minimap work)
 # curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -qy
@@ -530,6 +566,8 @@ main() {
 	_getOpts "${@}"
 	# setup the environment after processing all command line parameters
 	_setEnv
+	# check for external requirements
+	_checkExternals
 	#_debug "full command is '${_selfNAME} ${_fullCommand}'"
 	#_debug "subcommand is '${_subCommand:-nosubcommand}'"
 	#_debug "full subcommand is '${_subCommandParams}'"
