@@ -1,9 +1,20 @@
 " studio specific vimrc
+"
+" write a function to check for Plug
+" if it exists, load it
+if exists(':Plug')
+	call plug#begin()
+	Plug 'wxfr/minimap.vim'
+	PlugInstall 'wxfr/minimap.vim'
+	call plug#end()
+endif
 
 " add the vim-minimap plugin
-call plug#begin()
-Plug 'wfxr/minimap.vim'
-call plug#end()
+"call plug#begin()
+"Plug 'wfxr/minimap.vim'
+"call plug#end()
+
+" minimap settings
 let g:minimap_width = 10
 let g:minimap_auto_start = 0
 let g:minimap_auto_start_win_enter = 0
