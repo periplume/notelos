@@ -18,13 +18,26 @@ _checkExternals() {
 		if command -v ${_required} &>/dev/null; then
 			_info "${_required} found"
 		else
-			_warn "${_required} not found"
+			_warn "${_required} not found and is required"
 			_ask "install ${_required} ? [y/n] "
 			read -rsn1 _yn
 			[[ ${_yn} != "y" ]] && { _warn "${_required} will need to be installed"; break; }
 			_warn "install logs in ${_temp}"
 			_installExternals ${_required} ${_temp}
 			[[ $? = 0 ]] && _info "${_required} installed" || _error "${_required} install failed"
+		fi
+	done
+	for _recommended in "${_recommended[@]}"; do
+		if command -v ${_recommended} &>/dev/null; then
+			_info "${_recommended} found"
+		else
+			_warn "${_recommended} not found and is recommended"
+			_ask "install ${_recommended} ? [y/n] "
+			read -rsn1 _yn
+			[[ ${_yn} != "y" ]] && { _warn "${_recommended} will need to be installed"; break; }
+			_warn "install logs in ${_temp}"
+			_installExternals ${_recommended} ${_temp}
+			[[ $? = 0 ]] && _info "${_recommended} installed" || _error "${_recommended} install failed"
 		fi
 	done
 }
