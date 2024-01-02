@@ -10,6 +10,11 @@ set -o nounset
 set -o pipefail
 IFS=$'\n\t'
 
+#TODO check for sudo priv
+_checkSudo() {
+	sudo -n true 2>/dev/null
+}
+
 _checkExternals() {
 	_required=(git fzf vim)
 	_recommended=(tig rust vim-plug code-minimap minimap.vim)
@@ -22,7 +27,7 @@ _checkExternals() {
 			_ask "install ${_required} ? [y/n] "
 			read -rsn1 _yn
 			[[ ${_yn} != "y" ]] && { _warn "${_required} will need to be installed"; break; }
-			_warn "install logs in ${_temp}"
+			echo ; _warn "install logs in ${_temp}"
 			_installExternals ${_required} ${_temp}
 			[[ $? = 0 ]] && _info "${_required} installed" || _error "${_required} install failed"
 		fi
@@ -35,7 +40,7 @@ _checkExternals() {
 			_ask "install ${_recommended} ? [y/n] "
 			read -rsn1 _yn
 			[[ ${_yn} != "y" ]] && { _warn "${_recommended} will need to be installed"; break; }
-			_warn "install logs in ${_temp}"
+			echo; _warn "install logs in ${_temp}"
 			_installExternals ${_recommended} ${_temp}
 			[[ $? = 0 ]] && _info "${_recommended} installed" || _error "${_recommended} install failed"
 		fi
@@ -57,9 +62,11 @@ _installExternals() {
 			;;
 		git)
 			_warn "no git installer yet; do it yourself"
+			_info "use: sudo apt install git-all"
 			;;
 		tig)
 			_warn "no tig installer yet; do it yourself"
+			_info  "plain old apt-get works but requires sudo: apt-get install tig"
 			;;
 		rust)
 			# installs all in $HOME...remove with 'rustup self uninstall'
@@ -82,7 +89,7 @@ _installExternals() {
 			curl -fLo ~/.vim/autoload/plug.vim --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim &> ${_temp}/vim-plug_install.out
 			;;
 		*)
-			return 1
+			echo "$1 fed to _installExternals in error" >> ${_temp}/error.log
 			;;
 	esac
 }
@@ -604,6 +611,8 @@ main() {
 	_getOpts "${@}"
 	# setup the environment after processing all command line parameters
 	_setEnv
+	# check for sudo priveledges
+	_checkSudo || _warn "sudo priveledges will be required to run fully"
 	# check for external requirements
 	_checkExternals
 	#_debug "full command is '${_selfNAME} ${_fullCommand}'"
