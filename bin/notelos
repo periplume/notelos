@@ -9,9 +9,6 @@ set -o nounset
 set -o pipefail
 IFS=$'\n\t'
 
-# prevent this file from being sourced
-(return 0 2>/dev/null) && { echo "notelos cannot be sourced"; return; }
-
 ###########################
 # LIBRARY SOURCES
 ###########################
@@ -235,11 +232,12 @@ _setEnv() {
   _debug "${FUNCNAME[0]} _notelosSILENT=${_notelosSILENT}"
   _debug "${FUNCNAME[0]} _notelosLOG=${_notelosLOG}"
 	# set up the user name and email (from git)
+	_notelosUSERNAME=$(whoami)
   if [[ -f "${_notelosGITDIR:-}/config" ]]; then
-    _notelosUSERNAME=$(git -C "${_notelosGITDIR}" config --get user.name)
+    _notelosUSERFULLNAME=$(git -C "${_notelosGITDIR}" config --get user.name)
     _notelosUSEREMAIL=$(git -C "${_notelosGITDIR}" config --get user.email)
   else
-		_notelosUSERNAME=$(git config --get user.name) || _notelosUSERNAME=$(whoami)
+		_notelosUSERFULLNAME=$(git config --get user.name) || _notelosUSERFULLNAME=$(whoami)
 		_notelosUSEREMAIL=$(git config --get user.email) || _notelosUSEREMAIL=unknown
   fi
   _debug "${FUNCNAME[0]} user name: '${_notelosUSERNAME}'"
@@ -257,6 +255,7 @@ _setEnv() {
 	export _notelosLOGGING
 	export _notelosUSERNAME
 	export _notelosUSEREMAIL
+	export _notelosUSERFULLNAME
 	export _notelosDEBUG
 	export _notelosSILENT
 	export _notelosLOG
@@ -280,6 +279,44 @@ _isEnvSufficient() {
 	[ ${_sufficient} = true ] && return 0 || return 1
 }
 
+_getSession() {
+	if [[ -d "${_notelosHOME}/.state/session" ]]; then
+		# session is active
+		_warn "session under pid $(cat ${_notelosHOME}/.state/session/session.pid) is active"
+		return 1
+		# ask notify the session?
+		# send 
+		# echo -ne "\n\e[00;33;06mALERT\e[0m" > /dev/pts/2
+		# to the active pts that an attempt to run concurrently occured
+	fi
+	mkdir "${_notelosHOME}/.state/session" 2>/dev/null || { _error "could not make session dir"; return 1; }
+	echo $$ > "${_notelosHOME}/.state/session/session.pid"
+	echo $(date +%s) > "${_notelosHOME}/.state/session/session.start"
+	export _notelosSESSION=true
+}
+
+_trapExit() {
+	# just exit if no session was started
+	[[ ${_notelosSESSION:-} != true ]] && exit
+	# calculate the session duration
+	_session_begin=$(cat ${_notelosHOME}/.state/session/session.start)
+	_session_end=$(date +%s)
+	_session_duration=$((_session_end - _session_begin))
+	# close session
+	mv "${_notelosHOME}/.state/session" "${_notelosHOME}/.state/session.${_session_end}"
+	# restore original term colors if they were changed
+	if [[ -e "${_notelosHOME}/.state/session.${_session_end}/${_notelosUSERNAME}.original" ]]; then
+		_info "restoring original terminal color scheme"
+		source "${_notelosHOME}/.state/session.${_session_end}/${_notelosUSERNAME}.original"
+		_applyColorScheme _originalColors
+	fi
+	# restore the terminal window title
+	echo -e "\033]0;Terminal\a"
+	# merge session branch
+	git -C "${_notelosHOME}" add "${_notelosHOME}/.state/session.${_session_end}"
+	git -C "${_notelosHOME}" commit -q -m "[session] closed (${_session_duration} seconds)"
+}
+
 ###############
 ###### SHELL
 ###############
@@ -295,6 +332,10 @@ _shell() {
 	HISTCONTROL=ignoreboth
 	shopt -s histappend
 	set -o history
+	# trap EXIT and tidy up
+	trap _trapExit EXIT 
+	# start session
+	_getSession || { _error "could not obtain exclusive session"; return 1; }
 	local _p			#prompt
 	_capDETECT() {
 		# check if CAPS LOCK is on
@@ -303,20 +344,18 @@ _shell() {
 	}
 
 	_termSET() {
-		# change the xterm window title
-		echo -e '\033]0;${_notelosNAME}\a'
 		# 1. check if dark or light
 		_isTerminalDARK && _mode=dark || _mode=light
 		if [ ${_mode} = "dark" ]; then
-			if [ -e "${_notelosHOME}/.state/colorscheme.dark" ]; then
+			if [ -e "${_notelosHOME}/.state/colors/${_notelosUSERNAME}.dark" ]; then
 				# we have a saved dark scheme
-				source "${_notelosHOME}/.state/colorscheme.dark"
+				source "${_notelosHOME}/.state/colors/${_notelosUSERNAME}.dark"
 				_applyColorScheme _colorScheme
 			else
 				# we do not have a matching scheme
-				if [ -e "${_notelosHOME}/.state/colorscheme.light" ]; then
+				if [ -e "${_notelosHOME}/.state/colors/${_notelosUSERNAME}.light" ]; then
 					# we have the opposite
-					source "${_notelosHOME}/.state/colorscheme.light"
+					source "${_notelosHOME}/.state/colors/${_notelosUSERNAME}.light"
 					_applyColorScheme _colorScheme
 					_toggleTerminalBG
 				else
@@ -326,15 +365,15 @@ _shell() {
 			fi
 		else
 			# mode is light
-			if [ -e "${_notelosHOME}/.state/colorscheme.light" ]; then
+			if [ -e "${_notelosHOME}/.state/colors/${_notelosUSERNAME}.light" ]; then
 				# we have a matching light scheme
-				source "${_notelosHOME}/.state/colorscheme.light"
+				source "${_notelosHOME}/.state/colors/${_notelosUSERNAME}.light"
 				_applyColorScheme _colorScheme
 			else
 				# no matching scheme
-				if [ -e "${_notelosHOME}/.state/colorscheme.dark" ]; then
+				if [ -e "${_notelosHOME}/.state/colors/${_notelosUSERNAME}.dark" ]; then
 					# we have the opposite
-					source "${_notelosHOME}/.state/colorscheme.light"
+					source "${_notelosHOME}/.state/colors/${_notelosUSERNAME}.light"
 					_applyColorScheme _colorScheme
 					_toggleTerminalBG
 				else
@@ -343,6 +382,8 @@ _shell() {
 				fi
 			fi
 		fi
+		# change the xterm window title
+		echo -e "\033]0;${_notelosNAME}\a"
 	}
 	_termSET
 	# data protection level indicators
@@ -399,22 +440,24 @@ _shell() {
 	}
 	_printShellUsage() {
 		echo -ne "
+
   ?    show help                       === ${red}dsink${reset} ===============
-  1    do something neat               m  mount      x  restore
-  l    list contents                   u  unmount    y  compare
-  w    wordnet lookup                  f  format     z  something
-  j    docjohnson                      b  backup     -  status?
+  -    -----------------               m  mount      x  restore
+  j    docjohnson (dictionary)         u  unmount    y  compare
+  J    juice (resources)               f  format     z  something
+  -    -----------------               b  backup     -  status?
   g    germ                            ==========================
   e    epistle                         alt-B for term color setting
   r    resume                          alt-i/alt-o for ${green}i${reset}nternet or n${red}o${reset}t
-  -    unused                          terminal dimensions: $(_termINFO) CAPS:$(_capDETECT)
-  n    name a new thing                ====== ${cyan}debug${reset} ================
-  s    search                          alt-X   enable bash debug
-  -    unused                          alt-x   disable bash debug
-  -    unused                          alt-D   enable debug
-  -    unused                          alt-d   disable debug
-  -    unused                          0       print ENV
+  p    plume                           terminal dimensions: $(_termINFO) CAPS:$(_capDETECT)
+  n    noam                                                                            
+  -    -                               ====== ${cyan}debug${reset} ================                        
+  -    -                               alt-X   toggle bash debug
+  -    -                               alt-D   toggle debug
+  -    -                               alt-G   git status
+  s    search                          0       print ENV
   q    quit                            alt-t   inspect git with tig
+
 
 "
 	}
@@ -448,9 +491,6 @@ _shell() {
 	while read -rsn1 -p "$(_p)" __input || true; do
 	echo
 		case ${__input} in
-			l)
-				_interactiveCommandReader || :
-				;;
 			h|\?)
 				_printShellUsage
 				;;
@@ -466,9 +506,6 @@ _shell() {
 			m)
 				dsink mount || { _warn "could not mount dsink usb"; continue; }
 				;;
-			n)
-				_name || :
-				;;
 			u)
 				dsink unmount
 				;;
@@ -481,17 +518,18 @@ _shell() {
 			g)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
 				clear
-				germ || { _warn "an error occurred in germ"; continue; }
+				#germ || { _warn "an error occurred in germ"; continue; }
+				${_notelosHOME}/.bin/germ || { _warn "an error occurred in germ"; continue; }
 				;;
 			e)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
-				clear
-				epistle
+				#clear
+				epistle || :
 				;;
 			r)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
 				clear
-				resume
+				resume || :
 				;;
 			s)
 				_search || :
@@ -556,19 +594,26 @@ _shell() {
 							"d")
 								_notelosDEBUG=false
 								;;
+							"G")
+								# run git status
+								git -C "${_notelosHOME}" --git-dir="${_notelosGITDIR}" status
+								;;
 							"D")
-								_notelosDEBUG=true
+								[ $_notelosDEBUG = "true" ] && _notelosDEBUG=false || _notelosDEBUG=true
+								#_notelosDEBUG=true
 								_debug "enabled debug"
 								;;
 							"t")
 								tig -C"${_notelosGITDIR}"
 								;;
 							"X")
-								set -x
+								# toggle bash set -x
+								[[ $- == *x* ]] && set +x || set -x
+								#set -x
 								;;
-							"x")
-								set +x
-								;;
+							#"x")
+							#	set +x
+							#	;;
 							"T")
 								# toggle fg and bg term colors
 								_toggleTerminalBG || _debug "_toggleTerminalBG returned error"
@@ -577,16 +622,25 @@ _shell() {
 								;;
 							"B")
 								# set term color scheme
+								#TODO this needs to be made into function
+								#TODO currently, the original scheme is not the original of the terminal
+							 	# but the original after a scheme is applied...the
+								# _adjustColorScheme funtion in the library needs separate
+								# functions to allow for the session start to capture the
+								# original colors then (and not during color change...because
+								# the saved colors were already applied, so cannot restore to
+								# the original term if we have colors defined...messy)	
 								# a supposedly unnatural method...define an associative array
 								# here (_colorScheme) which is used as a nameref in the
 								# _adjustColorScheme function, thus we can save this color
 								# scheme as our "default"
 								# declare the assoc array first
 								declare -A _colorScheme
+								declare -A _originalColors
 								# then call the function with the arg name of the assoc array
 								# the "save" function in _adjustColorScheme copies the live
 								# settings into this array
-								_adjustColorScheme _colorScheme
+								_adjustColorScheme _colorScheme _originalColors
 								# and then we have the scheme to do as we please
 								#declare -p _colorScheme
 								# check if it is empty
@@ -596,9 +650,14 @@ _shell() {
 									# a scheme was saved (and was applied)
 									# 1. check if we have a dark or light theme
 									_isTerminalDARK && _mode=dark || _mode=light
-									# 2. save the theme to .state/colorscheme.dark (or .light)
-									_saveAs="${_notelosHOME}/.state/colorscheme.${_mode}"
+									# 2. save the theme to .state/colors/$USER.dark (or .light)
+									[[ ! -d "${_notelosHOME}/.state/colors" ]] && mkdir "${_notelosHOME}/.state/colors"
+									_saveAs="${_notelosHOME}/.state/colors/${_notelosUSERNAME}.${_mode}"
 									declare -p _colorScheme > "${_saveAs}"
+									# save the original colors (allowing a revert upon
+									# exit)...but only once
+									_original="${_notelosHOME}/.state/session/${_notelosUSERNAME}.original"
+									[[ -e "${_original}" ]] || declare -p _originalColors > "${_original}"
 									# 2a. commit it
 									git -C "${_notelosHOME}" add "${_saveAs}"
 									git -C "${_notelosHOME}" commit -q -m "${_mode} theme saved"
@@ -641,7 +700,7 @@ _shell() {
 
 _checkHome() {
 	if [ -d "${_notelosHOME}" ]; then
-		_info "${_notelosNAME} home found"
+		_debug "${_notelosNAME} home found"
 	else
 		_error "notelos home '${_notelosHOME}' not found"
 		exit 1
@@ -663,4 +722,6 @@ main() {
 	[ -z "${_subCommand:-}" ] && _shell
 	{ _warn "${_subCommand} called, but that function doesn't exist"; exit 1; }
 }
+# prevent this file from being sourced
+(return 0 2>/dev/null) && { echo "notelos cannot be sourced"; return; }
 main "${@}"
