@@ -880,6 +880,8 @@ _toggleTerminalBG() {
 # a brute-force kind of xterm-compatible live color adjustment for the terminal
 #TODO allow color names to be changed
 _adjustColorScheme() {
+	# $1 nameref to new color scheme
+	# $2 nameref to original color scheme
 	# define the ansi 8-bit palette of 16 colors (the names are arbitrary, used
 	# for display, and can be changed)
 	declare -A ansi_palette=([0]="black" [1]="red" [2]="green" [3]="yellow" [4]="blue" [5]="magenta" [6]="cyan" [7]="white" [8]="grey" [9]="brightred" [10]="brightgreen" [11]="brightyellow" [12]="brightblue" [13]="brightmagenta" [14]="brightcyan" [15]="snow")
@@ -889,6 +891,8 @@ _adjustColorScheme() {
 	declare -A _user
 	# use nameref to pass the _user selected scheme back to the caller
 	declare -n _newColorScheme=${1}
+	# use nameref to pass the original scheme back to the caller
+	declare -n _originalColorScheme=${2}
 	# the list of elements we cycle through with _cycle
 	declare -a _cycle=("bg" "fg" "cursor" 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)
 	# set the i for cycle()
@@ -926,6 +930,10 @@ _adjustColorScheme() {
 			done
 			initial[$x]=$hex
 			hex=""
+		done
+		# finally, copy the values into the return nameref
+		for key in "${!initial[@]}"; do
+			_originalColorScheme["$key"]="${initial[$key]}"
 		done
 	}
 
@@ -1138,9 +1146,10 @@ _adjustColorScheme() {
 				break
 				;;
 			*)
-				reset_initial
-				printf '\n'
-				break
+				#reset_initial
+				#printf '\n'
+				#break
+				continue
 				;;
 		esac
 
