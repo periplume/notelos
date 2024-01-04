@@ -15,7 +15,7 @@ IFS=$'\n\t'
 ###########################
  
 # required external commands
-_requiredCommands=(git tig vipe fzf)
+_requiredCommands=(git tig fzf)
 
 ###########################
 # LIBRARY
@@ -112,11 +112,13 @@ _getOpts () {
 				_printInfo; _printUsage; exit 0
 				;;
 			a)
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is    NOT a flag ($OPTARG)"; exit 1; }
 				_isCommand "${OPTARG}" || { _error "'${OPTARG}' is not allowed (it is a command)"; exit 1; }
 				_NAME=${OPTARG}
 				_warn "using alt name '${_NAME}'"
 				;;
 			p)
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is    NOT a flag ($OPTARG)"; exit 1; }
 				_BASE=${OPTARG}
 				_warn "using alt path '${_BASE}'"
 				;;
@@ -904,22 +906,14 @@ _deleteSource() {
 ########################
 
 _search() {
-	cd "${_HOME}"
-	RG_PREFIX="rg --column --line-number --no-heading --color=always --smart-case "
-	INITIAL_QUERY="${*:-}"
-	find "${_HOME}/${_currentSource}" -type f | fzf --ansi --disabled --query "$INITIAL_QUERY" \
-    --bind "start:reload($RG_PREFIX {q})+unbind(ctrl-r)" \
-    --bind "change:reload:sleep 0.1; $RG_PREFIX {q} || true" \
-    --bind "ctrl-f:unbind(change,ctrl-f)+change-prompt(2. fzf> )+enable-search+rebind(ctrl-r)+transform-query(echo {q} > /tmp/rg-fzf-r; cat /tmp/rg-fzf-f)" \
-    --bind "ctrl-r:unbind(ctrl-r)+change-prompt(1. ripgrep> )+disable-search+reload($RG_PREFIX {q} || true)+rebind(change,ctrl-f)+transform-query(echo {q} > /tmp/rg-fzf-f; cat /tmp/rg-fzf-r)" \
-    --color "hl:-1:underline,hl+:-1:underline:reverse" \
-    --prompt '1. ripgrep> ' \
-    --delimiter : \
-    --header '╱ CTRL-R (ripgrep mode) ╱ CTRL-F (fzf mode) ╱' \
-    --preview 'batcat --color=always {1} --highlight-line {2}' \
-    --preview-window 'up,60%,border-bottom,+{2}+3/3,~3' \
-    --bind 'enter:become(germ edit {1} +{2})'
+	rg --color=always --line-number --no-heading --smart-case "${*:-}" | fzf \
+		--ansi \
+		--color "hl:-1:underline,hl+:-1:underline:reverse" \
+		--delimiter : \
+		--preview 'batcat --color=always {1} --highlight-line {2}' \
+		--preview-window 'up,60%,border-bottom,+{2}+3/3,~3'
 }
+	
 
 ###############
 ###### SHELL
@@ -972,10 +966,10 @@ HEREDOC
 		printf '  \n'
 		printf '  \n'
 		printf '                                         ===========debug etc==============\n'
-		printf '                                         ctrl-x toggle bash debug (set -x) \n'
-		printf '                                         ctrl-b toggle germ debug          \n'
-		printf '                                         0 print env                       \n'
-		printf '                                         ctrl-g git status                 \n'
+		printf '  a   add new (editor)                    ctrl-x toggle bash debug (set -x) \n'
+		printf '  f   fast add (no editor)                ctrl-b toggle germ debug          \n'
+		printf '  e   edit                                0 print env                       \n'
+		printf '  b   browse                              ctrl-g git status                 \n'
 		printf '  q   quit %s\n' ${_NAME}
 		printf '.  *insert msg*                                                                .\n'
 	}
