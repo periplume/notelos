@@ -10,14 +10,26 @@ set -o nounset
 set -o pipefail
 IFS=$'\n\t'
 
-#TODO check for sudo priv
 _checkSudo() {
-	sudo -n true 2>/dev/null
+	# check for sudo privledges (not exhaustive)
+	# return 0 if they seem to exist, otherwise 1
+	# we use timeout to kill sudo -v...then match the return of sudo
+	timeout -k .2 .2 sudo -v 2>/dev/null
+	_error=$?
+	# return of zero indicates we have an active sudo session
+	[[ ${_error} = 0 ]] && return 0
+	# if this produces 1, not in sudoers file
+	[[ ${_error} = 1 ]] && return 1
+	# if this produces 137, in sudoers file but no active session
+	[[ ${_error} = 137 ]] && return 0
+	# if neither matched, assume not and return 1
+	return 1
 }
 
 _checkExternals() {
 	_required=(git fzf vim)
-	_recommended=(tig rust vim-plug code-minimap minimap.vim)
+	_recommended=(tig cargo vim-plug code-minimap minimap.vim)
+	# TODO fix this for files eg vim-plug
 	_temp=$(mktemp -d)
 	for _required in "${_required[@]}"; do
 		if command -v ${_required} &>/dev/null; then
@@ -26,7 +38,7 @@ _checkExternals() {
 			_warn "${_required} not found and is required"
 			_ask "install ${_required} ? [y/n] "
 			read -rsn1 _yn
-			[[ ${_yn} != "y" ]] && { _warn "${_required} will need to be installed"; break; }
+			[[ ${_yn} != "y" ]] && { echo; _warn "${_required} will need to be installed"; break; }
 			echo ; _warn "install logs in ${_temp}"
 			_installExternals ${_required} ${_temp}
 			[[ $? = 0 ]] && _info "${_required} installed" || _error "${_required} install failed"
@@ -39,7 +51,7 @@ _checkExternals() {
 			_warn "${_recommended} not found and is recommended"
 			_ask "install ${_recommended} ? [y/n] "
 			read -rsn1 _yn
-			[[ ${_yn} != "y" ]] && { _warn "${_recommended} will need to be installed"; break; }
+			[[ ${_yn} != "y" ]] && { echo; _warn "${_recommended} will need to be installed"; break; }
 			echo; _warn "install logs in ${_temp}"
 			_installExternals ${_recommended} ${_temp}
 			[[ $? = 0 ]] && _info "${_recommended} installed" || _error "${_recommended} install failed"
@@ -68,7 +80,7 @@ _installExternals() {
 			_warn "no tig installer yet; do it yourself"
 			_info  "plain old apt-get works but requires sudo: apt-get install tig"
 			;;
-		rust)
+		cargo)
 			# installs all in $HOME...remove with 'rustup self uninstall'
 			_info "installing rust..."
 			curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -qy &> ${_temp}/rust_install.out
@@ -233,6 +245,8 @@ _getOpts () {
 					case ${flag} in
 						b)
 							# store the notelos suite of scripts in $HOME/bin
+							# TODO this should not be an option...otherwise confusing path
+							# problem emerges
 							_binIntegral=false
 							_warn "using '\$HOME/bin' for executables"
 							;;	
@@ -287,11 +301,10 @@ _getOpts () {
 _setEnv() {
 	# set up the initial environment details
 	# determine the calling script
-	#TODO move to use BASH_SOURCE[0] instead (or abandon this)
 	# experimenting with a "pipe install" shows that using these methods to
-	# determine what we need is completely unreliable
-	_selfNAME=$(basename "${0}")
-	_selfABSOLUTE=$(readlink -f "${0}")
+	# determine what we need are all unreliable
+	_selfNAME=$(basename "${BASH_SOURCE[0]}")
+	_selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
 	_selfBASE=$(dirname "${_selfABSOLUTE}")
 	# determine the intended destination
 	#_notelosNAME=${_altNAME:-${_selfNAME%%.*}}  # unreliable (if piped)
@@ -307,11 +320,13 @@ _setEnv() {
 		# user prefers $HOME/bin
 		_notelosBIN="${HOME}/bin"
 	fi
-	# determine user and email from git if possible
-	git config --global --get user.name 1>/dev/null && _notelosUSERNAME=$(git config --global --get user.name)
+	# determine user's full name and email from git if possible
+	git config --global --get user.name 1>/dev/null && _notelosUSERFULLNAME=$(git config --global --get user.name)
 	git config --global --get user.email 1>/dev/null && _notelosUSEREMAIL=$(git config --global --get user.email)
-	[ -z "${_notelosUSERNAME:-}" ] && _notelosUSERNAME=$(whoami)
+	_notelosUSERNAME=$(whoami)
+	#[ -z "${_notelosUSERNAME:-}" ] && _notelosUSERNAME=$(whoami)
 	[ -z "${_notelosUSEREMAIL:-}" ] && _notelosUSEREMAIL="unknown"
+	[ -z "${_notelosUSERFULLNAME:-}" ] && _notelosUSERFULLNAME=${_notelosUSERNAME}
 	# make these global
 	declare -g _selfNAME
 	declare -g _selfABSOLUTE
@@ -323,6 +338,7 @@ _setEnv() {
 	declare -g _notelosLAB
 	declare -g _notelosUSERNAME
 	declare -g _notelosUSEREMAIL
+	declare -g _notelosUSERFULLNAME
 	# print for debug
 	#_debug "$(declare -p _selfNAME)"
 	#_debug "$(declare -p _selfABSOLUTE)"
@@ -334,6 +350,7 @@ _setEnv() {
 	#_debug "$(declare -p _notelosLAB)"
 	#_debug "$(declare -p _notelosUSERNAME)"
 	#_debug "$(declare -p _notelosUSEREMAIL)"
+	#_debug "$(declare -p _notelosUSERFULLNAME)"
 }
 
 _checkInstalled() {
@@ -455,6 +472,7 @@ _install() {
 	_debug "$(declare -p _notelosBIN)"
 	_debug "$(declare -p _notelosUSERNAME)"
 	_debug "$(declare -p _notelosUSEREMAIL)"
+	_debug "$(declare -p _notelosUSERFULLNAME)"
 	#
 	# check if _notelosBIN is in the PATH
 	_checkPath "${_notelosBIN}" || _warn "you should add '${_notelosBIN}' to your \$PATH"
