@@ -361,13 +361,13 @@ _create() {
   _time=$(date +%s)
   printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" >      "${_HOME}/.git/description"
 	# make the epistle skeleton workflow dirs
-	mkdir "${_epistleDir}/draft"
-	mkdir "${_epistleDir}/print"
-	mkdir "${_epistleDir}/sent"
-	mkdir "${_epistleDir}/intent"
+	mkdir "${_HOME}/draft"
+	mkdir "${_HOME}/print"
+	mkdir "${_HOME}/sent"
+	mkdir "${_HOME}/intent"
 	# ignore intent and log
-	echo "epistle.log" > "${_epistleDir}/.gitignore"
-	echo "intent/" >> "${_epistleDir}/.gitignore"
+	echo "epistle.log" > "${_HOME}/.gitignore"
+	echo "intent/" >> "${_HOME}/.gitignore"
   git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
   git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
 }
@@ -428,50 +428,30 @@ _new() {
 	local _path
 	if [[ -z ${_workingParams} ]]; then
 		_recipient=$(_listRecipients)
-	#	while IFS='' read -d $'\n' -r -p "$(_ask "new epistle addressed ${yellow}to whom${reset}? [f to find] ")" -e _recipient; do
-#			case "${_recipient}" in
-#				h|help|\?)
-#					_info "enter the name of the person to whom the letter shall be addressed"
-#					;;
-#				q)
-#					_info "try again later when you know to whom you are writing"
-#					return
-#					;;
-#				f)
-#					_recipient=$(_listRecipients) && break || continue
-#					;;
-#				*)
-#					[[ -z "${_recipient}" ]] && { _warn "empty name not allowed"; continue; }
-#					break
-#					;;
-#			esac
-#		done
 	else
 		_recipient=${_workingParams}
 	fi
 	_validateName "${_recipient}" || { _error "name '${_recipient}' not allowed"; return 1; }
 	local _key="${_recipient}_${_date}"
 	local _state="intent"
-	local _path="${_epistleDir}/${_state}/${_key}"
+	local _path="${_HOME}/${_state}/${_key}"
 	test -f "${_path}" && { _warn "intent exists"; return; }
-	test -f "${_epistleDir}/draft/${_key}" && { _warn "draft '${_key}' exists; use edit"; return; }
+	test -f "${_HOME}/draft/${_key}" && { _warn "draft '${_key}' exists; use edit"; return; }
 	# seed the file
 	local _header="$(printf "%60s\n\n%s,\\\n\\\n" "${_dateHuman}" "${_recipient}")"
 	echo -e "${_header}" > "${_path}"
-	#vim -u "${_studioDir}/.config/vimrc" -c 'set syntax=markdown' "${_path}"
-	_studioEdit "${_path}"
-	#vim "+normal G$" "${_path}"
+	${_EDITOR} "${_path}"
 	# check if anything was added to the seeded file
 	if cmp -s "${_path}" <( echo -e "${_header}" ); then
 		_warn "nothing to save"
 		rm "${_path}"
 		return
 	else
-		local _draft="${_epistleDir}/draft/${_key}"
+		local _draft="${_HOME}/draft/${_key}"
 		local _pathspec="draft/${_key}"
 		mv "${_path}" "${_draft}"
-		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" add "${_pathspec}"
-		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" commit -q -m "saved draft to ${_recipient} (${_dateHuman})" "${_pathspec}" && _info "changes to '${_key}' saved" || _error "changes not saved!"
+		git -C "${_HOME}" add "${_pathspec}"
+		git -C "${_HOME}" commit -q -m "saved draft to ${_recipient} (${_dateHuman})" "${_pathspec}" && _info "changes to '${_key}' saved" || _error "changes not saved!"
 	fi
 }
 
@@ -495,12 +475,10 @@ _edit() {
 	local _path
 	_key=$(_list) || { _warn "invalid selection"; return; }
 	_state=${_key%%/*}
-	#vim -u "${_studioDir}/.config/vimrc" -c 'set syntax=markdown' "${_key}"
-	#vim "+normal G$" "${_key}"
-	_studioEdit "${_key}"
+	${_EDITOR} "${_key}"
 	# next...need to know if the file changed since the last commit
-	if ! git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" diff --quiet --exit-code "${_key}"; then
-		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" commit -m "edited ${_key}" "${_key}"
+	if ! git -C "${_HOME}" diff --quiet --exit-code "${_key}"; then
+		git -C "${_HOME}" commit -m "edited ${_key}" "${_key}"
 	fi
 }	
 
@@ -514,15 +492,14 @@ _import() {
 		_sourceRepoName=$(basename ${_importRepo})
 		cd "${_importRepo}" || { _error "could not change to ${_importRepo}"; exit 1; }
 		git diff-index --quiet --cached main || { _error "source is not clean"; return 1; }
-		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" remote add "${_sourceRepoName}" "${_importRepo}"
-		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" fetch "${_sourceRepoName}" --tags
-		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" merge --allow-unrelated-histories "${_sourceRepoName}/main" -m "merge of ${_importRepo}"
-		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" remote remove "${_sourceRepoName}"
+		git -C "${_HOME}" remote add "${_sourceRepoName}" "${_importRepo}"
+		git -C "${_HOME}" fetch "${_sourceRepoName}" --tags
+		git -C "${_HOME}" merge --allow-unrelated-histories "${_sourceRepoName}/main" -m "merge of ${_importRepo}"
+		git -C "${_HOME}" remote remove "${_sourceRepoName}"
 	else
 		echo "import a single file"
 	fi
 }
-
 
 _print() {
 	local _printer
@@ -537,7 +514,7 @@ _print() {
 	iconv -c -f utf-8 -t ISO8859-1 "${_what}" | \
 		enscript -b"${_header}" -F "Courier7" --margins=50::20: -f "Courier12" -P "${_printer}"
 	if [[ "${_state}" != "print" ]]; then
-		git ${_git} mv "${_what}" "print/${_key}"
+		git -C "${_HOME}" mv "${_what}" "print/${_key}"
 	fi
 }
 
