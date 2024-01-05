@@ -1,0 +1,736 @@
+#!/usr/bin/env bash
+# file: epistle
+# source: https://github.com/periplume/notelos.git
+# author: jason@bloom.us
+# description: letter writing
+
+# STRICT SHELL
+set -o errexit 
+set -o nounset
+set -o pipefail
+IFS=$'\n\t'
+
+###########################
+# PREREQUISITES
+###########################
+ 
+# required external commands
+_requiredCommands=(git tig fzf)
+
+###########################
+# LIBRARY
+###########################
+
+# source library commands and set up log/console
+# use the library file from the same directory if possible
+[[ -e "$(dirname $0)/notelos-lib.sh" ]] \
+	&& source "$(dirname $0)/notelos-lib.sh" \
+	|| source notelos-lib.sh
+
+###########################
+# LOGGING AND CONSOLE
+###########################
+
+# default initial debugging and logging settings
+# note: command line parameters can modify these
+# script debug toggle (set to true to enable default global debugging)
+_DEBUG=false
+# silent mode for scripting (supresses all output)
+_SILENT=false
+# logging facility
+_LOG=false
+
+# instantiate the log/mesg functions with defaults (these will be re-initialized
+# after reading positional parameters)
+_fLOG
+
+####################################
+# HELPER FUNCTIONS
+####################################
+
+_printUsage () {
+  cat << EOF
+usage: epistle [OPTIONS] <command> [OPTIONS]
+
+options:
+ -h      print this usage info
+ -l      log commands and debug info to log file
+ -d      print debug info to stdout and/or log
+ -s      suppress all stdout/stderr
+ -v      print version number and exit
+ -x      force standalone mode
+
+alternate env settings:
+ -a <name>  set the epistle dir name to <name>
+ -p <path>  set the master notelos base path
+
+commands:
+EOF
+_printCommands
+}
+
+_printCommands() {
+	cat <<  EOF
+ new                 start a new letter
+ edit                edit an existing letter
+ print               print a letter to send
+ list                list the letters per state
+ mark                mark the status of a letter (as sent, etc)
+ inspect             run tig on the epistle repo
+ import              import files into the rep
+EOF
+}
+
+_printInfo () {
+  cat << EOF
+epistle manages all aspects of letter writing, except writing
+EOF
+}
+
+####################################
+# PARAMETER PROCESSING
+####################################
+
+_getOpts () {
+	# preserve the initial positional parameters
+	export _fullCommand="${@}"
+	_debug "full command is '${_fullCommand}'"
+	local OPTIND
+	# do not allow names for notelos or self to be names of commands
+	_isCommand() {
+		local _allowed=true
+		local _commandList
+		_commandList=$(_printCommands | cut -f2 -d' ')
+		for _command in ${_commandList}; do
+      [[ "${_command}" = "${1}" ]] && _allowed=false 
+    done
+    [[ ${_allowed} = "true" ]] || return 1
+  }
+	while getopts ":hsdlxva:p:" flag ; do
+		case ${flag} in 
+			h)
+				_printInfo; _printUsage; exit 0
+				;;
+			a)
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+				_isCommand "${OPTARG}" || { _error "'${OPTARG}' is not allowed (it is a command)"; exit 1; }
+				_NAME=${OPTARG}
+				_warn "using alt name '${_NAME}'"
+				;;
+			p)
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+				_BASE=${OPTARG}
+				_warn "using alt path '${_BASE}'"
+				;;
+ 	    s)
+				_debug "${FUNCNAME[0]}: enabling silent mode with flag -$flag"
+ 	      _SILENT=true
+				;;
+			d)
+				_debug "${FUNCNAME[0]}: enabled debug mode with flag -$flag"
+				_DEBUG=true
+				;;
+			l)
+				_debug "${FUNCNAME[0]}: enabled log mode with flag -$flag"
+				_LOG=true
+				;;
+			x)
+        _debug "${FUNCNAME[0]}: running in standalone mode with -$flag"
+        _MODE=standalone
+        ;;
+			v)
+				_info "${green}verion${reset}: beta"; exit 0
+				;;
+			?)
+				_error "invalid global option: -${OPTARG}"; exit 1
+				;;
+		esac
+	done
+	shift $((OPTIND - 1)); OPTIND=1
+	# preserve the full subcommand with its parameters
+	export _subCommandParams="${@}"
+	# look for the subcommand and check for its options
+	while ((${#})); do
+		case ${1} in
+			help)
+				_printInfo; _printUsage; exit 0
+				;;
+			new)
+				_subCommand=$1; shift
+				while getopts ":d:" flag; do
+					case ${flag} in
+						d)
+							# specify alternate date (rather than today)
+							_debug "alternate date specified=${OPTARG}"
+							_altDate="${OPTARG}"
+							;;
+						?)
+				 			_error "${FUNCNAME}: unknown flag -${OPTARG}"; exit 1
+							;;
+					esac
+				done
+				return
+				;;
+			import)
+				_subCommand=$1
+				while getopts ":m:" flag; do
+					case ${flag} in
+						m)
+							# merge another epistle repo into this
+							_debug "import merge ${OPTARG}"
+							_importRepo="${OPTARG}"
+							;;
+						?)
+				 			_error "${FUNCNAME}: unknown flag -${OPTARG}"; exit 1
+							;;
+					esac
+				done
+				return
+				;;
+			edit)
+				_subCommand=$1; shift
+				return
+				;;
+			print)
+				_subCommand=$1; shift
+				return
+				;;
+			list)
+				_subCommand=$1
+				return
+				;;
+			mark)
+				_subCommand=$1
+				return
+				;;
+			inspect)
+				_subCommand=$1
+				return
+				;;
+			*)
+				_error "${FUNCNAME}: '${1}' is not a subcommand"
+				return 1
+				;;
+		esac
+		shift
+	done
+}
+
+_setEnv() {
+  # get the name and absolute path of the calling script
+  _selfNAME=$(basename "${BASH_SOURCE[0]}")
+  _selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
+  _selfBASE=$(dirname "${_selfABSOLUTE}")
+  _selfCALL=${0}
+  _selfPWD=$(pwd)
+	# determine mode (notelos-integrated or standalone)
+	[[ -n "${_notelosHOME+x}" && ${_MODE:-} != "standalone" ]] && _MODE=integrated || _MODE=standalone
+	# note: the -x switch overrides the global _notelosHOME var 
+	# set up the working environment
+	if [[ ${_MODE} = "integrated" ]]; then
+		# set up integrated mode
+		_MASTER="${_notelosNAME}"
+		_BASE="${_notelosHOME}"
+		_NAME="${_NAME:-epistle}"
+		_HOME="${_BASE}/${_NAME}"
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/.log/${_NAME}.log"
+		# inherit these (from notelos)
+		_DEBUG=${_notelosDEBUG}
+		_LOG=${_notelosLOG}
+		_SILENT=${_notelosSILENT}
+		_USERNAME=${_notelosUSERNAME}
+		_USERFULLNAME=${_notelosUSERFULLNAME}
+		_USEREMAIL=${_notelosUSEREMAIL}
+		_EDITOR=_notelosEdit
+	else
+		# set up standalone mode
+		_MASTER=self
+		_BASE="${_BASE:-$HOME}"
+		_NAME="${_NAME:-epistle}"
+		_HOME=${_BASE}/${_NAME}
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/${_NAME}.log"
+		# inherit these
+		_DEBUG=${_DEBUG:-false}
+		_LOG=${_LOG:-false}
+		_SILENT=${_SILENT:-false}
+		_USERNAME=$(whoami)
+		_USERFULLNAME="unknown"
+		_USEREMAIL="unknown"
+		_EDITOR=${EDITOR:-nano}
+	fi
+  [[ -f "${_LOGFILE:-}" ]] && _LOGGING=true || _LOGGING=false
+	_debug "$(declare -p _MODE)"
+	_debug "$(declare -p _MASTER)"
+	_debug "$(declare -p _NAME)"
+	_debug "$(declare -p _BASE)"
+	_debug "$(declare -p _HOME)"
+	_debug "$(declare -p _USERNAME)"
+	_debug "$(declare -p _USERFULLNAME)"
+	_debug "$(declare -p _USEREMAIL)"
+	_debug "$(declare -p _GITDIR)"
+	_debug "$(declare -p _LOGFILE)"
+	_debug "$(declare -p _DEBUG)"
+	_debug "$(declare -p _SILENT)"
+	_debug "$(declare -p _LOG)"
+	_debug "$(declare -p _LOGGING)"
+	export _MODE
+	export _MASTER
+	export _NAME
+	export _BASE
+	export _HOME
+	export _USERNAME
+	export _USERFULLNAME
+	export _USEREMAIL
+	export _GITDIR
+	export _LOGFILE
+	export _DEBUG
+	export _SILENT
+	export _LOG
+	export _LOGGING
+}
+
+_checkExternalTools() {
+	# check for required tools, report accordingly
+	local _sufficient=true
+	for _required in "${_requiredCommands[@]}"; do
+		if ! hash "${_required}" 2>/dev/null; then
+			_warn "${FUNCNAME}: ${_required} not found"
+			_sufficient=false
+		else
+			: #_debug "${FUNCNAME}: ${_required} found"
+		fi
+	done
+	[ ${_sufficient} = true ] && return 0 || return 1
+}
+
+_checkHome() {
+  # check if the home dir exists
+  # check if it is a germ-created git
+  # return 1 if missing or not git
+  # mind condition: if subcommand is create
+	[[ ! -d "${_BASE}" && ${_MODE} = "notelos" ]] && { _error "notelos base not found"; exit 1; }
+	[[ -d "${_BASE}" ]] || { _error "base '${_BASE}' does not exist"; exit 1; }
+	local _base="${_BASE}"
+	local _dirName="${_NAME}"
+	local _dirPath="${_HOME}"
+	local _git_desc="${_dirPath}/.git/description"
+  if [ -d "${_dirPath}" ]; then
+    if [ -f "${_git_desc}" ]; then
+      # the git description file exists, lets check it for our marker
+      read -r _desc < "${_git_desc}"
+      if [[ ${_desc} = "${_MASTER}:${_dirName}" ]]; then
+        # if repo does exist, return 0
+        _debug "${_git_desc} = ${_desc}"
+				return
+      else
+        # if repo does not exist, warn and exit
+        _error "${_dirPath} exists and is NOT a studio-created repo"
+        return 1
+      fi
+    else
+      _error "${_dirPath} exists and is NOT a git repo"
+      _error "move existing ${_dirPath} before proceeding"
+      return 1
+    fi
+  else
+    # dir does not exist
+    _warn "'${_dirPath}' does not exist"
+    read -rsn1 -p "$(_ask 'create repo now? [y/n]')" _yn
+    echo
+    [[ ${_yn} != "y" ]] && { _warn "cannot run without a repo"; return 1;  }
+    _create || { _error "could not create ${_dirName} repo"; return 1; }
+    return
+  fi
+}
+
+############################
+# CREATE
+############################
+
+_create() {
+	# do not overwrite an existing anything
+	[[ -d "${_HOME}" ]] && { _error "'${_HOME}' exists"; return 1; }
+	[ ! -d "${_HOME}" ] && mkdir "${_HOME}"
+	git init -q -b main "${_HOME}"
+  git -C "${_HOME}" config user.name "${_USERNAME}"
+  git -C "${_HOME}" config user.email "${_USEREMAIL}"
+	# put the installed signature in git description file
+  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
+  _time=$(date +%s)
+  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" >      "${_HOME}/.git/description"
+	# make the epistle skeleton workflow dirs
+	mkdir "${_epistleDir}/draft"
+	mkdir "${_epistleDir}/print"
+	mkdir "${_epistleDir}/sent"
+	mkdir "${_epistleDir}/intent"
+	# ignore intent and log
+	echo "epistle.log" > "${_epistleDir}/.gitignore"
+	echo "intent/" >> "${_epistleDir}/.gitignore"
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
+  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
+}
+
+##################################
+# INSPECT
+##################################
+
+_inspect() {
+	tig -C${_GITDIR}
+}
+
+##################################
+# NEW
+##################################
+
+_validateName() {
+	# function to validate the format of the recipient's name
+	# rules: upper, lower, and digits allowed
+	# space, dot, dash, comma, and apostrophe	allowed
+	# first must be letter (upper or lower)
+	# last must be letter or number
+	# space and non-alpha-numeric characters cannot repeat
+	# IRS allows ampersand and dash
+	# names allow apostrophe, hyphen, period, space
+	# arg 1 = name to evaluate
+	local _valid=true
+	local _lenLimit=60
+	[[ "${1}" =~ ^[[:upper:]|[:lower:]] ]] || \
+		{ _warn "name '${1}' must begin with a letter"; _valid=false; }
+	[[ "${1}" =~ [[:alnum:]]$ ]] || \
+		{ _warn "name '${1}' must end with letter or number"; _valid=false; }
+	[[ ! "${1}" =~ ([.]|[-]|[,]|[\']){2} ]] || \
+		{ _warn "non-alphanumeric [.-,'] characters mustn't repeat"; _valid=false; }
+	[[ ! "${1}" =~ ([ ]){2} ]] || \
+		{ _warn "space character mustn't repeat"; _valid=false; }
+	[[ "${1}" =~ ^([[:alnum:]]|[-,.\' ])*$ ]] || \
+		{ _warn "allowed characters: letters, numbers, comma, dot, dash, apostrophe"; _valid=false; }
+	[[ ${#1} -le ${_lenLimit} ]] || \
+		{ _warn "length (${#1}) exceeds length limit of ${_lenLimit}"; _valid=false; }
+	[[ $_valid = true ]] || return 1
+}
+
+_new() {
+	# create a new letter
+	local _recipient
+	local _time=$(date +%s)
+	# if the -d flag was used to specify the date, it is used to name the file and
+	# placed in the date field of the letter
+	_date=${_altDate:-$(date --date=@${_time} +%d-%m-%Y)}
+	if [[ -z ${_altDate:-} ]]; then
+		_dateHuman="$(date --date=@${_time} '+%d %b %Y')"
+	else
+		_dateHuman=${_altDate}
+	fi
+	local _key
+	local _state
+	local _path
+	if [[ -z ${_workingParams} ]]; then
+		_recipient=$(_listRecipients)
+	#	while IFS='' read -d $'\n' -r -p "$(_ask "new epistle addressed ${yellow}to whom${reset}? [f to find] ")" -e _recipient; do
+#			case "${_recipient}" in
+#				h|help|\?)
+#					_info "enter the name of the person to whom the letter shall be addressed"
+#					;;
+#				q)
+#					_info "try again later when you know to whom you are writing"
+#					return
+#					;;
+#				f)
+#					_recipient=$(_listRecipients) && break || continue
+#					;;
+#				*)
+#					[[ -z "${_recipient}" ]] && { _warn "empty name not allowed"; continue; }
+#					break
+#					;;
+#			esac
+#		done
+	else
+		_recipient=${_workingParams}
+	fi
+	_validateName "${_recipient}" || { _error "name '${_recipient}' not allowed"; return 1; }
+	local _key="${_recipient}_${_date}"
+	local _state="intent"
+	local _path="${_epistleDir}/${_state}/${_key}"
+	test -f "${_path}" && { _warn "intent exists"; return; }
+	test -f "${_epistleDir}/draft/${_key}" && { _warn "draft '${_key}' exists; use edit"; return; }
+	# seed the file
+	local _header="$(printf "%60s\n\n%s,\\\n\\\n" "${_dateHuman}" "${_recipient}")"
+	echo -e "${_header}" > "${_path}"
+	#vim -u "${_studioDir}/.config/vimrc" -c 'set syntax=markdown' "${_path}"
+	_studioEdit "${_path}"
+	#vim "+normal G$" "${_path}"
+	# check if anything was added to the seeded file
+	if cmp -s "${_path}" <( echo -e "${_header}" ); then
+		_warn "nothing to save"
+		rm "${_path}"
+		return
+	else
+		local _draft="${_epistleDir}/draft/${_key}"
+		local _pathspec="draft/${_key}"
+		mv "${_path}" "${_draft}"
+		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" add "${_pathspec}"
+		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" commit -q -m "saved draft to ${_recipient} (${_dateHuman})" "${_pathspec}" && _info "changes to '${_key}' saved" || _error "changes not saved!"
+	fi
+}
+
+_list() {
+	# filter stuff into fzf
+	local _fzfPrompt="--prompt=TYPE-TO-FILTER>"
+	local _fzfColor="--color=bg:#111111,preview-bg:#222222,prompt:yellow"
+	local _fzfHeader="--header=choose from the list above"
+	find draft print sent -type f | fzf ${_fzfColor} --preview-window=up,70%,wrap --preview='cat {}'
+}
+
+_listRecipients() {
+	# lists and sorts all known recipient names
+	# uses fzf --print-query...can select from known name or enter a new one
+	find draft print sent -type f | cut -f2 -d/ | cut -f1 -d_ | uniq | sort | fzf --print-query | tail -1
+}
+
+_edit() {
+	local _key
+	local _state
+	local _path
+	_key=$(_list) || { _warn "invalid selection"; return; }
+	_state=${_key%%/*}
+	#vim -u "${_studioDir}/.config/vimrc" -c 'set syntax=markdown' "${_key}"
+	#vim "+normal G$" "${_key}"
+	_studioEdit "${_key}"
+	# next...need to know if the file changed since the last commit
+	if ! git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" diff --quiet --exit-code "${_key}"; then
+		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" commit -m "edited ${_key}" "${_key}"
+	fi
+}	
+
+_import() {
+	local _importType
+	local _importSource
+	local _sourceRepoName
+	# this first import is from another repo (dev)
+	if [[ ! -z "${_importRepo:-}" ]]; then
+		# -m flag used...repo merge
+		_sourceRepoName=$(basename ${_importRepo})
+		cd "${_importRepo}" || { _error "could not change to ${_importRepo}"; exit 1; }
+		git diff-index --quiet --cached main || { _error "source is not clean"; return 1; }
+		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" remote add "${_sourceRepoName}" "${_importRepo}"
+		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" fetch "${_sourceRepoName}" --tags
+		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" merge --allow-unrelated-histories "${_sourceRepoName}/main" -m "merge of ${_importRepo}"
+		git -C "${_epistleDir}" --git-dir="${_epistleGitDisk}" remote remove "${_sourceRepoName}"
+	else
+		echo "import a single file"
+	fi
+}
+
+
+_print() {
+	local _printer
+	local _what
+	local _key
+	local _state
+	_printer=$(_findPrinters) || { _warn "selection '${_printer}' not a valid printer"; return; }
+	_what=$(_list) || { _warn "can't print nothing"; return; }
+	_key=${_what##*/}
+	_state=${_what%%/*}
+	local _header="||page $% of $="
+	iconv -c -f utf-8 -t ISO8859-1 "${_what}" | \
+		enscript -b"${_header}" -F "Courier7" --margins=50::20: -f "Courier12" -P "${_printer}"
+	if [[ "${_state}" != "print" ]]; then
+		git ${_git} mv "${_what}" "print/${_key}"
+	fi
+}
+
+_findPrinters() {
+	lpstat -e | fzf --preview-window=right,75%:wrap --preview 'echo "#lpstat:"; lpstat -v {}; echo "#lpq:"; lpq -P {}'
+}
+
+_doCommit() {
+	_newFile="${1}"
+	_commitMsg="${2}"
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_newFile}"  
+  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "${_commitMsg}"
+}	
+
+_isIndexClean() {
+	git -C "${_HOME}" --git-dir="${_GITDIR}" diff-index --quiet --cached main 2>&1 >/dev/null || return 1
+}
+
+
+###############
+###### SHELL
+###############
+
+_shell() {
+	cd "${_HOME}" || { _error "can not enter ${_NAME}"; return 1; }
+	# set up shell history business
+	HISTFILE="${_HOME}/.${_NAME}_history"
+	HISTSIZE=1000
+	HISTFILESIZE=10000
+	HISTTIMEFORMAT="%s %F %T "
+	HISTCONTROL=ignoreboth
+	shopt -s histappend
+	set -o history
+	# set the current source
+	export _currentSource=$(_getSource)
+	# the splash welcome
+	_displayWelcome() {
+	cat <<HEREDOC
+             _     _   _
+            (_)   | | | |
+   ___ _ __  _ ___| |_| | ___
+  / _ \ '_ \| / __| __| |/ _ \
+ |  __/ |_) | \__ \ |_| |  __/
+  \___| .__/|_|___/\__|_|\___|
+      | |
+      |_|
+
+      type ${green}h${reset} for help
+      type ${red}q${reset} to quit
+
+HEREDOC
+	}
+	# the main menu
+	_printMenu() {
+		printf '\n'
+		printf ':----epistle commands----------------------------------------------------------o\n'
+		printf '\n'
+		printf '  H   how to use                                                               .\n'
+		printf '  n   start a new letter                                                       .\n'
+		printf '  e   edit an existing letter                                                  .\n'
+		printf '                                                                               .\n'
+		printf '  b   browse                                                                   .\n'
+		printf '  s   search                                                                    \n'
+		printf '                                                                               .\n'
+		printf '                                                                               .\n'
+		printf '                                                                                \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  \n'
+		printf '                                         ===========debug etc==============\n'
+		printf '  a   add new (editor)                    ctrl-x toggle bash debug (set -x) \n'
+		printf '  f   fast add (no editor)                ctrl-b toggle germ debug          \n'
+		printf '  e   edit                                0 print env                       \n'
+		printf '  b   browse                              ctrl-g git status                 \n'
+		printf '  q   quit %s\n' ${_NAME}
+		printf '.  *insert msg*                                                                .\n'
+	}
+	_printGuidance() {
+		printf '\n'
+		printf ':---epistle usage guide--------------------------------------------------------o\n'
+		printf '\n'
+		printf ' epistle tracks letters by their state, of which there are:                     \n'
+		printf '   - draft   (anything started)                                                .\n'
+		printf '   - print   (anything printed)                                                .\n'
+		printf '   - sent    (explicitly marked as sent)                                       .\n'
+		printf '                                                                               .\n'
+		printf '                                                                               .\n'
+		printf '                                                                               .\n'
+		printf '                                                                               .\n'
+		printf '                                                                               .\n'
+		printf '                                                                               .\n'
+		printf '                                                                               .\n'
+		printf '  \n'
+		printf '                                          \n'
+		printf '  \n'
+		printf '  \n'
+		printf '                                                                               .\n'
+		printf '  \n'
+		printf '  \n'
+		printf '  \n'
+		printf '  q   quit %s\n' ${_NAME}
+		printf '.  *insert msg*                                                                .\n'
+	}
+	# the prompt and interpreter
+	_mainPrompt() {
+		# disallow use of ctrl-c etc
+		trap '' SIGQUIT SIGTSTP SIGINT SIGTERM
+		_p() {
+			# set the prompt
+			reset=$'\001\e[0m\002'
+			_cH=$'\001\e[00;45m\002'		#home
+			_cE=$'\001\e[00;7m\002'			#epistle TODO change color
+			_cU=$'\001\e[00;32m\002'		#user
+			_dirty="${green}o${reset}"
+			_isIndexClean || _dirty="${red}-${reset}"
+			echo -n "${_cH}${_MASTER}${reset}:${_cE}${_NAME}${reset} ${_cU}${_USERNAME}${reset} ${_dirty} > "
+		}
+		_displayWelcome
+		local __input
+		while read -rsn1 -p "$(_p)" __input || true; do
+			echo
+			case ${__input} in
+				h|\?)
+					_printMenu
+					;;
+				H)
+					_printGuidance
+					;;
+				n)
+					_new || :
+					;;
+				e)
+					_edit || :
+					;;
+				b)
+					_browse || :
+					;;
+				s)
+					_search || :
+					;;
+				$'\x18')
+					# toggle bash set -x debug with ctrl-x
+					[[ $- == *x* ]] && set +x || set -x
+					;;
+				$'\x02')
+					# toggle script _DEBUG with ctrl-B
+					[ $_DEBUG = "true" ] && _DEBUG=false || _DEBUG=true
+					_debug "debug on"
+					;;
+				$'\x07')
+					# run git status
+  				git -C "${_HOME}" --git-dir="${_GITDIR}" status
+					;;
+				0)
+					printenv | grep "^_"
+					;;
+				t)
+					_inspect
+					;;
+				q)
+					return
+					;;
+				$'\e')
+					# ignore all escape sequences
+					_debug "esc"
+					# eat anything there
+					read -rsn8 -t .002 _escape || continue
+					_debug "esc $_escape"
+					;;
+				$'\04')
+					# read ctrl-d
+					_warn "use 'q' to quit"
+					;;
+			esac
+		done
+	}
+	_mainPrompt
+}
+
+main() {
+	# read all the poositional parameters
+  _getOpts "${@}"
+  # setup the environment after processing all command line parameters
+  _setEnv
+  # validate the environment (external tools required)
+  _checkExternalTools || { _error "cannot run until these problems are resolved"; return 1; }
+  # check for the working directory
+  _checkHome || { _error "cannot run without a working environment"; return 1;  }
+  # enter custom shell if no arguments
+  [ -z "${_subCommand:-}" ] && _shell
+  # otherwise, pass the commands to the called "command"
+  [[ -n "${_subCommand:-}" ]] && _debug "now calling the eval to run '${_subCommand:-}'"
+  [[ -n "${_subCommand:-}" ]] && eval _"${_subCommand}" || :
+}
+main "${@}"
