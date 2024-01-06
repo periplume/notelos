@@ -232,6 +232,7 @@ _setEnv() {
 		_LOG=${_notelosLOG}
 		_SILENT=${_notelosSILENT}
 		_USERNAME=${_notelosUSERNAME}
+		_USERFULLNAME=${_notelosUSERFULLNAME}
 		_USEREMAIL=${_notelosUSEREMAIL}
 		_EDITOR=_notelosEdit
 	else
@@ -247,6 +248,7 @@ _setEnv() {
 		_LOG=${_LOG:-false}
 		_SILENT=${_SILENT:-false}
 		_USERNAME=$(whoami)
+		_USERFULLNAME="unknown"
 		_USEREMAIL="unknown"
 		_EDITOR=${EDITOR:-nano}
 	fi
@@ -257,6 +259,7 @@ _setEnv() {
 	_debug "$(declare -p _BASE)"
 	_debug "$(declare -p _HOME)"
 	_debug "$(declare -p _USERNAME)"
+	_debug "$(declare -p _USERFULLNAME)"
 	_debug "$(declare -p _USEREMAIL)"
 	_debug "$(declare -p _GITDIR)"
 	_debug "$(declare -p _LOGFILE)"
@@ -270,6 +273,7 @@ _setEnv() {
 	export _BASE
 	export _HOME
 	export _USERNAME
+	export _USERFULLNAME
 	export _USEREMAIL
 	export _GITDIR
 	export _LOGFILE
@@ -308,7 +312,7 @@ _checkHome() {
     if [ -f "${_git_desc}" ]; then
       # the git description file exists, lets check it for our marker
       read -r _desc < "${_git_desc}"
-      if [[ ${_desc} = "${_MASTER}:${_dirName}" ]]; then
+			if [[ ${_desc} == ${_MASTER}:${_NAME}:${_USERNAME}* ]]; then
         # if repo does exist, return 0
         _debug "${_git_desc} = ${_desc}"
 				return
@@ -344,7 +348,11 @@ _create() {
 	git init -q -b main "${_HOME}"
   git -C "${_HOME}" config user.name "${_USERNAME}"
   git -C "${_HOME}" config user.email "${_USEREMAIL}"
-	echo "${_MASTER}:${_NAME}" > "${_GITDIR}/description"
+	# put the installed signature in git description file
+  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
+  _time=$(date +%s)
+  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" >      "${_HOME}/.git/description"
+	# make the default notebook (aka "source")
 	mkdir "${_HOME}/default"
 	echo "default source (notebook, project, etc)" > "${_HOME}/default/.description"
 	echo "default" > "${_HOME}/.current"

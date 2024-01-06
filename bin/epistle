@@ -173,18 +173,6 @@ _getOpts () {
 				;;
 			import)
 				_subCommand=$1
-				while getopts ":m:" flag; do
-					case ${flag} in
-						m)
-							# merge another epistle repo into this
-							_debug "import merge ${OPTARG}"
-							_importRepo="${OPTARG}"
-							;;
-						?)
-				 			_error "${FUNCNAME}: unknown flag -${OPTARG}"; exit 1
-							;;
-					esac
-				done
 				return
 				;;
 			edit)
@@ -320,13 +308,13 @@ _checkHome() {
     if [ -f "${_git_desc}" ]; then
       # the git description file exists, lets check it for our marker
       read -r _desc < "${_git_desc}"
-      if [[ ${_desc} = "${_MASTER}:${_dirName}" ]]; then
+      if [[ ${_desc} == ${_MASTER}:${_NAME}:${_USERNAME}* ]]; then
         # if repo does exist, return 0
         _debug "${_git_desc} = ${_desc}"
 				return
       else
         # if repo does not exist, warn and exit
-        _error "${_dirPath} exists and is NOT a studio-created repo"
+        _error "${_dirPath} exists and is NOT a notelos-created repo"
         return 1
       fi
     else
@@ -356,10 +344,6 @@ _create() {
 	git init -q -b main "${_HOME}"
   git -C "${_HOME}" config user.name "${_USERNAME}"
   git -C "${_HOME}" config user.email "${_USEREMAIL}"
-	# put the installed signature in git description file
-  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
-  _time=$(date +%s)
-  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" >      "${_HOME}/.git/description"
 	# make the epistle skeleton workflow dirs
 	mkdir "${_HOME}/draft"
 	mkdir "${_HOME}/print"
@@ -368,8 +352,13 @@ _create() {
 	# ignore intent and log
 	echo "epistle.log" > "${_HOME}/.gitignore"
 	echo "intent/" >> "${_HOME}/.gitignore"
+	# add gitignore and make first commit
   git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
   git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
+	# put the installed signature in git description file
+  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
+  _time=$(date +%s)
+  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" > "${_HOME}/.git/description"
 }
 
 ##################################
@@ -426,11 +415,7 @@ _new() {
 	local _key
 	local _state
 	local _path
-	if [[ -z ${_workingParams} ]]; then
-		_recipient=$(_listRecipients)
-	else
-		_recipient=${_workingParams}
-	fi
+	_recipient=$(_listRecipients)
 	_validateName "${_recipient}" || { _error "name '${_recipient}' not allowed"; return 1; }
 	local _key="${_recipient}_${_date}"
 	local _state="intent"
@@ -486,22 +471,54 @@ _import() {
 	local _importType
 	local _importSource
 	local _sourceRepoName
-	# this first import is from another repo (dev)
-	if [[ ! -z "${_importRepo:-}" ]]; then
-		# -m flag used...repo merge
-		_sourceRepoName=$(basename ${_importRepo})
-		cd "${_importRepo}" || { _error "could not change to ${_importRepo}"; exit 1; }
+	_importSource=$(_finder "select the repo to import")
+	[[ -d "${_importSource}" ]] && _importType=repo
+	[[ -f "${_importSource}" ]] && _importType=file
+	# repo import
+	if [[ ${_importType:-} = "repo" ]]; then
+		_sourceRepoName=$(basename ${_importSource})
+		cd "${_importSource}" || { _error "could not change to ${_importSource}"; exit 1; }
 		git diff-index --quiet --cached main || { _error "source is not clean"; return 1; }
-		git -C "${_HOME}" remote add "${_sourceRepoName}" "${_importRepo}"
+		git -C "${_HOME}" remote add "${_sourceRepoName}" "${_importSource}"
 		git -C "${_HOME}" fetch "${_sourceRepoName}" --tags
-		git -C "${_HOME}" merge --allow-unrelated-histories "${_sourceRepoName}/main" -m "merge of ${_importRepo}"
+		git -C "${_HOME}" merge --allow-unrelated-histories "${_sourceRepoName}/main" -m "[import] merged ${_sourceRepoName}"
 		git -C "${_HOME}" remote remove "${_sourceRepoName}"
+	elif [[ ${_importType:-} = "file" ]]; then
+		echo "do a single file import"
 	else
-		echo "import a single file"
+		echo "add a full directory import"	
 	fi
 }
 
 _print() {
+	# lets take arguments here
+	# print what (the file)
+	# print how
+	#  1. to postscript and then to printer
+	#  2. to pdf and then to "outbox"
+	#  3. to pdf and then to "path"
+	#  4. to pdf and then to "url"
+	# print why
+	#  1. to proof a draft
+	#  2. to send a final copy
+	#  3. to archive a hardcopy
+	local _what
+	local _key
+	local _state
+	_what=$(_list) || { _warn "can't print nothing"; return; }
+	_debug "file to print is '${_what}'"
+	_key=${_what##*/}
+	_debug "key is '${_key}'"
+	_state=${_what%%/*}
+	_debug "state is '${_state}'"
+	_sendToPrinter "${_what}"
+}
+
+# also works
+# cupsfilter <file> > output.pdf
+# interesting: https://gitlab.com/saalen/ansifilter
+
+_Xprint() {
 	local _printer
 	local _what
 	local _key
@@ -517,6 +534,19 @@ _print() {
 		git -C "${_HOME}" mv "${_what}" "print/${_key}"
 	fi
 }
+
+# paps --font="Monospace 12" Self_04-01-2024 | lp -d HL-2270DW
+# paps --font="Monospace 12" <file> | enscript 
+
+
+# print functions
+# 1. find printers
+# 2. choose printer
+# 3. aspects
+#   a. header
+#   b. footer
+#   c. font
+#   d. margins
 
 _findPrinters() {
 	lpstat -e | fzf --preview-window=right,75%:wrap --preview 'echo "#lpstat:"; lpstat -v {}; echo "#lpq:"; lpq -P {}'
@@ -548,24 +578,17 @@ _shell() {
 	HISTCONTROL=ignoreboth
 	shopt -s histappend
 	set -o history
-	# set the current source
-	export _currentSource=$(_getSource)
 	# the splash welcome
 	_displayWelcome() {
-	cat <<HEREDOC
-             _     _   _
-            (_)   | | | |
-   ___ _ __  _ ___| |_| | ___
-  / _ \ '_ \| / __| __| |/ _ \
- |  __/ |_) | \__ \ |_| |  __/
-  \___| .__/|_|___/\__|_|\___|
-      | |
-      |_|
-
-      type ${green}h${reset} for help
-      type ${red}q${reset} to quit
-
-HEREDOC
+printf '              _      __  __    \n'
+printf '  ___  ____  (_)____/ /_/ /__  \n'
+printf ' / _ \/ __ \/ / ___/ __/ / _ \ \n'
+printf '/  __/ /_/ / (__  ) /_/ /  __/ \n'
+printf '\___/ .___/_/____/\__/_/\___/  \n'
+printf '   /_/                         \n'
+printf "\n"
+printf "      type ${green}h${reset} for help\n"
+printf "      type ${red}q${reset} to quit\n\n"
 	}
 	# the main menu
 	_printMenu() {
@@ -576,8 +599,8 @@ HEREDOC
 		printf '  n   start a new letter                                                       .\n'
 		printf '  e   edit an existing letter                                                  .\n'
 		printf '                                                                               .\n'
-		printf '  b   browse                                                                   .\n'
-		printf '  s   search                                                                    \n'
+		printf '                                                                               .\n'
+		printf '                                                                                \n'
 		printf '                                                                               .\n'
 		printf '                                                                               .\n'
 		printf '                                                                                \n'
@@ -585,11 +608,11 @@ HEREDOC
 		printf '  \n'
 		printf '  \n'
 		printf '  \n'
-		printf '                                         ===========debug etc==============\n'
-		printf '  a   add new (editor)                    ctrl-x toggle bash debug (set -x) \n'
-		printf '  f   fast add (no editor)                ctrl-b toggle germ debug          \n'
-		printf '  e   edit                                0 print env                       \n'
-		printf '  b   browse                              ctrl-g git status                 \n'
+		printf '  p   print something                        ===========debug etc===============\n'
+		printf '  i   import                                  ctrl-x toggle bash debug (set -x) \n'
+		printf '  n   start a new letter                      ctrl-b toggle germ debug          \n'
+		printf '  e   edit                                    0 print env                       \n'
+		printf '  b   browse                                  ctrl-g git status                 \n'
 		printf '  q   quit %s\n' ${_NAME}
 		printf '.  *insert msg*                                                                .\n'
 	}
@@ -626,9 +649,9 @@ HEREDOC
 		_p() {
 			# set the prompt
 			reset=$'\001\e[0m\002'
-			_cH=$'\001\e[00;45m\002'		#home
-			_cE=$'\001\e[00;7m\002'			#epistle TODO change color
-			_cU=$'\001\e[00;32m\002'		#user
+			_cH=$'\001\e[00;45m\002'				#home
+			_cE=$'\001\e[00;34;7m\002'			#epistle TODO change color
+			_cU=$'\001\e[00;32m\002'				#user
 			_dirty="${green}o${reset}"
 			_isIndexClean || _dirty="${red}-${reset}"
 			echo -n "${_cH}${_MASTER}${reset}:${_cE}${_NAME}${reset} ${_cU}${_USERNAME}${reset} ${_dirty} > "
@@ -644,14 +667,20 @@ HEREDOC
 				H)
 					_printGuidance
 					;;
+				i)
+					_import || :
+					;;
 				n)
 					_new || :
 					;;
 				e)
 					_edit || :
 					;;
-				b)
-					_browse || :
+				b|l)
+					_list || :
+					;;
+				p)
+					_print || :
 					;;
 				s)
 					_search || :

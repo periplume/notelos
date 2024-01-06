@@ -27,7 +27,7 @@ IFS=$'\n\t'
 
 # debugging and logging default settings
 # debug toggle (set to true to enable default global debugging)
-_notelosDEBUG=true
+_notelosDEBUG=false
 # silent mode for scripting (supresses all output)
 _notelosSILENT=false
 # logging facility
@@ -523,8 +523,7 @@ _shell() {
 				;;
 			e)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
-				#clear
-				epistle || :
+				${_notelosHOME}/.bin/epistle || :
 				;;
 			r)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'

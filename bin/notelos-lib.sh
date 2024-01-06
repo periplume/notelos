@@ -1227,4 +1227,228 @@ _applyColorScheme() {
 	[[ $COLORTERM =~ ^(truecolor|24bit)$ ]] && return 0
 }
 
+_finder() {
+	# single file finder and selector
+	# uses fzf as the interface to find and select a file or directory to import
+	# uses files in /tmp to maintain state
+	# state includes the CWD of the fzf subshell...thus we can maneuver
+	# returns the full path of the following variable (or 1 if none was selected)
+	local _selectedFile
+	# set the temp file dir
+	export _tmpDir=$(mktemp -d)
+	# help for _preview
+	_showHelp() {
+			printf '
++------------------------------------------------+
+| notelos finder help  |  hit "/" to close help  |
++---------------------+--------------------------+
+options
+
+toggle hidden files and directories
+LEFT PANE: view files, directories, or both
+PREVIEW PANE: cycle preview for dirs
+ tree -L 1
+ tree -L 2
+ tree -L 3
+ tree
+ ls
+ ls -l
+arrows
+up/down             right/left
+ctrl-c: exit
+ctrl-a: toggle between "find ~" and "find /" (functional reset)
+ctrl-f: toggle between find dirs and find dirs+files
+ctrl-f: toggle between ignore hidden and include hidden' 
+	}
+	export -f _showHelp
+	# toggle option (simply touches or removes file of name given in arg 1)
+	_toggle() {
+		# pass the option name to the function
+		_opt=${1:-}
+		if [ -f ${_tmpDir}/${1} ]; then
+			rm -f ${_tmpDir}/${1} >/dev/null 2>&1
+		else
+			touch ${_tmpDir}/${1}
+		fi
+	}
+	export -f _toggle
+	_set() {
+		# set an option
+		# arg 1 = option name
+		# arg 2 = option value
+		echo "${2}" > "${_tmpDir}/${1}"
+	}
+	export -f _set
+	_get() {
+		# get value for option
+		[[ -f "${_tmpDir}/${1}" ]] || { echo err; return; }
+		cat "${_tmpDir}/${1}"
+	}
+	export -f _get
+	# populate fzf with a view (ie a list)
+	_getView() {
+		# populate the left pane with find results
+		# arg 1 (optional) sets the PATH for find
+		# other options are toggled in fzf and read in file
+		#
+		#local _findScope="find ~"
+		local _findScope
+		local _findDepth="-maxdepth 1"
+		local _findType="-type d"
+		local _findHide='-not -path "*/.*"'
+		local _cwd		# current working directory (stored in /tmp)
+		local _scope	# ctrl-a (toggle) between / and ~ changes view context and resets search
+		local _path		# the find search path
+		# first set the find search path (find where?)
+		# read the _cwd from tmp (this means we are in an active session)
+		[[ -f "${_tmpDir}/cwd" ]] && _cwd=$(cat "${_tmpDir}/cwd")
+		#
+		# set the find search path
+		# if no arg, finder is starting or reloading
+		if [[ -z ${1:-} ]]; then
+			# no arg passed
+			# check $_cwd
+			if [ -z "$_cwd" ]; then
+				# _cwd is not set, this is an initial view
+				_path="$HOME"
+			else
+				# _cwd is set and no arg...scope change
+				[ -f "${_tmpDir}/root" ] && _path="/"
+				[ ! -f "${_tmpDir}/root" ] && _path="$HOME"
+			fi
+		else
+			# arg passed
+			if [ -f "${1}" ]; then
+				# the selection is a file
+				touch "${_tmpDir}/_getView.expandfile"
+			elif [ -d "${1}" ] && [[ "${1}" = "${_cwd}" ]]; then
+				# $1 is the same as $_cwd and is a directory
+				# then it is a reload (or left arrow on a subdir)
+				_path="${1}"
+				touch "${_tmpDir}/_getView.reload"
+			else
+				# $1 is a directory and not _cwd
+				# it is a change context view
+				# set find scope
+				_path="${1}"
+				touch "${_tmpDir}/_getView.cd"
+				#
+			fi
+		fi
+		# set the find search path now
+		_findScope="find '${_path}'"
+		# update the state file for _cwd
+		echo "${_path}" > "${_tmpDir}/cwd"
+		# set the search depth (for deep vs surface search)
+		# toggle the dirs or dirs+files option
+		[ -f "${_tmpDir}/files" -a ! -f "{$_tmpDir}/nodirs" ] && _findType=""
+		# toggle hidden files (default: ignore hidden)
+		[ -f "${_tmpDir}/hidden" ] && _findHide=""
+		# print find command to tmp file for debugging
+		echo ${_findScope} ${_findDepth} ${_findType} ${_findHide} > "${_tmpDir}/_getView.find"
+		# assemble find command
+		eval ${_findScope} ${_findDepth} ${_findType} ${_findHide}
+	}
+	export -f _getView
+	_preview() {
+		# preview window of _finder produced by fzf
+		# context: file or dir (or help)
+		# default: tree -C
+		# options: hidden files or dirs
+		# 					files, dirs, or both
+		# 
+		local _viewMeans="echo"
+		local _viewFiles		# on or off
+		local _viewDirs			# on or off
+		if [[ -d "${1}" ]]; then
+			# viewing a directory
+			echo '$ tree -L 1 -C "$1"'
+			_cwd=$(cat "${_tmpDir}/cwd")
+			echo "cwd=${_cwd:-empty}"
+			[[ -f "${_tmpDir}/nofiles" ]] 
+			tree -L 1 -C "$1"
+		else
+			# viewing a file
+			#less -C "$1"
+			batcat --color always "${1}"
+		fi
+	}
+	export -f _preview
+	_prompt() {
+		# set the prompt string
+		# what is the scope
+		[[ -f "${_tmpDir}/root" ]] && _scope=/ || _scope="~"
+		# hidden or not
+		[[ -f "${_tmpDir}/hidden" ]] && _hidden=hide || _hidden=nohide
+		# files or no files
+		[[ -f "${_tmpDir}/files" ]] && _files=files || _files=nofiles
+		echo "$_scope $_hidden $_files > "
+	}
+	export -f _prompt
+	# main fzf wrapper
+	_fzfWrapper() {
+		# trap exit and clean up state (_tmpDir) every time
+		trap "rm -rf ${_tmpDir}" EXIT
+		# loop until fzf returns the selection
+		while true; do
+			_fzfReturn=$(fzf \
+				--no-multi \
+				--no-mouse \
+				--ansi \
+				--print-query \
+				--delimiter=/ \
+				--track \
+				--header='Press ? for help' \
+				--info=inline \
+				--preview='_preview {}' \
+				--preview-window '65%,border-sharp' \
+				--prompt '> ' \
+				--bind "ctrl-c:abort" \
+				--bind "ctrl-a:execute(_toggle root)+reload(_getView)+first" \
+				--bind "ctrl-a:+transform-prompt(_prompt)" \
+				--bind "ctrl-e:execute(_toggle nodirs)+reload(_getView {})+first" \
+				--bind "ctrl-f:execute(_toggle files)+reload(_getView {})+first" \
+				--bind "ctrl-f:+transform-prompt(_prompt)" \
+				--bind "ctrl-h:execute(_toggle hidden)+reload(_getView {})+first" \
+				--bind "ctrl-h:+transform-prompt(_prompt)" \
+				--bind "start:reload(_getView)" \
+				--bind "change:last" \
+				--bind "enter:accept-non-empty" \
+				--bind "?:change-preview(_showHelp | less)" \
+				--bind "/:change-preview(_preview {})" \
+				--bind "ctrl-o:execute(xmessage {..-2})" \
+				--bind "ctrl-l:execute(xmessage {q} {})" \
+				--bind "right:reload(_getView {})+first" \
+				--bind "left:reload(_getView {..-2})+first"
+			);
+		[[ ! ${_fzfReturn} ]] && break
+		query=$(echo "${_fzfReturn}" | head -n1)
+		selection=$(echo "${_fzfReturn}" | tail -n1)
+		echo "${selection}" && break
+	done
+	}
+	_fzfWrapper
+}
+
+_choosePrinter() {
+	# printers must already be set up
+	# consider using 'avahi-browse -a' or nmap for printer discovery
+	lpstat -e |  fzf \
+	 --preview-window=right,75%:wrap \
+	 --preview 'echo "#lpstat:"; lpstat -v {}; echo "#lpq:"; lpq -P {}'
+}
+
+_sendToPrinter() {
+	# requires paps
+	# arg 1 = file (if absent...take stdin)
+	local _printer
+	local _what=${1:-stdin}
+	_printer=$(_choosePrinter) || { _warn "'${_printer}' not a valid printer"; return; }
+	if [[ ${_what} != "stdin" ]]; then
+		paps --font="Monospace 12" "${_what}" | lp -d "${_printer}"
+	else
+		paps --font="monospace 12" - | lp -d "${_printer}"
+	fi
+}
+
 
