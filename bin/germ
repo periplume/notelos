@@ -348,10 +348,6 @@ _create() {
 	git init -q -b main "${_HOME}"
   git -C "${_HOME}" config user.name "${_USERNAME}"
   git -C "${_HOME}" config user.email "${_USEREMAIL}"
-	# put the installed signature in git description file
-  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
-  _time=$(date +%s)
-  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" >      "${_HOME}/.git/description"
 	# make the default notebook (aka "source")
 	mkdir "${_HOME}/default"
 	echo "default source (notebook, project, etc)" > "${_HOME}/default/.description"
@@ -361,6 +357,10 @@ _create() {
   git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
   git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/default/.description" 
   git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
+	# put the installed signature in git description file
+  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
+  _time=$(date +%s)
+  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" >      "${_HOME}/.git/description"
 }
 
 ##################################
