@@ -1,0 +1,817 @@
+#!/usr/bin/env bash
+# file: mnemon
+# source: https://github.com/periplume/notelos.git
+# author: jason@bloom.us
+# description: dictate and transcription machine
+
+# STRICT SHELL
+set -o errexit 
+set -o nounset
+set -o pipefail
+IFS=$'\n\t'
+
+###########################
+# PREREQUISITES
+###########################
+ 
+# required external commands
+_requiredCommands=(git tig fzf ffmpeg whisper)
+
+###########################
+# LIBRARY
+###########################
+
+# source library commands and set up log/console
+# use the library file from the same directory if possible
+[[ -e "$(dirname $0)/notelos-lib.sh" ]] \
+	&& source "$(dirname $0)/notelos-lib.sh" \
+	|| source notelos-lib.sh
+
+###########################
+# LOGGING AND CONSOLE
+###########################
+
+# default initial debugging and logging settings
+# note: command line parameters can modify these
+# script debug toggle (set to true to enable default global debugging)
+_DEBUG=false
+# silent mode for scripting (supresses all output)
+_SILENT=false
+# logging facility
+_LOG=false
+
+# instantiate the log/mesg functions with defaults (these will be re-initialized
+# after reading positional parameters)
+_fLOG
+
+####################################
+# HELPER FUNCTIONS
+####################################
+
+_printUsage () {
+  cat << EOF
+usage: nmemon [OPTIONS] <command> [OPTIONS]
+
+options:
+ -h      print this usage info
+ -l      log commands and debug info to log file
+ -d      print debug info to stdout and/or log
+ -s      suppress all stdout/stderr
+ -v      print version number and exit
+ -x      force standalone mode
+
+alternate env settings:
+ -a <name>  set the nmemon dir name to <name>
+ -p <path>  set alternate base path
+
+commands:
+EOF
+_printCommands
+}
+
+_printCommands() {
+	cat <<  EOF
+ new                 record and transcribe a new thing   
+ import              fetch external recordings and transcribe
+ create              create a new nmemon git database
+ inspect             run tig on the nmemon git bare repo
+ search              interactive search
+ browse              read through the transcriptions
+EOF
+}
+
+_printInfo () {
+  cat << EOF
+nmemon records and transcribes spoken english to written text
+EOF
+}
+
+####################################
+# PARAMETER PROCESSING
+####################################
+
+_getOpts () {
+	# preserve the initial positional parameters
+	export _fullCommand="${@}"
+	_debug "full command is '${_fullCommand}'"
+	local OPTIND
+	# do not allow names for notelos or self to be names of germ commands
+	_isCommand() {
+		local _allowed=true
+		local _commandList
+		_commandList=$(_printCommands | cut -f2 -d' ')
+		for _command in ${_commandList}; do
+      [[ "${_command}" = "${1}" ]] && _allowed=false 
+    done
+    [[ ${_allowed} = "true" ]] || return 1
+  }
+	while getopts ":hsdlxva:p:" flag ; do
+		case ${flag} in 
+			h)
+				_printInfo; _printUsage; exit 0
+				;;
+			a)
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+				_isCommand "${OPTARG}" || { _error "'${OPTARG}' is not allowed (it is a command)"; exit 1; }
+				_NAME=${OPTARG}
+				_warn "using alt name '${_NAME}'"
+				;;
+			p)
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+				_BASE=${OPTARG}
+				_warn "using alt path '${_BASE}'"
+				;;
+ 	    s)
+				_debug "${FUNCNAME[0]}: enabling silent mode with flag -$flag"
+ 	      _SILENT=true
+				;;
+			d)
+				_debug "${FUNCNAME[0]}: enabled debug mode with flag -$flag"
+				_DEBUG=true
+				;;
+			l)
+				_debug "${FUNCNAME[0]}: enabled log mode with flag -$flag"
+				_LOG=true
+				;;
+			x)
+        _debug "${FUNCNAME[0]}: running in standalone mode with -$flag"
+        _MODE=standalone
+        ;;
+			v)
+				_info "${green}verion${reset}: beta"; exit 0
+				;;
+			?)
+				_error "invalid global option: -${OPTARG}"; exit 1
+				;;
+		esac
+	done
+	shift $((OPTIND - 1)); OPTIND=1
+	# preserve the full subcommand with its parameters
+	export _subCommandParams="${@}"
+	# look for the subcommand and check for its options
+	while ((${#})); do
+		case ${1} in
+			help)
+				_printInfo; _printUsage; exit 0
+				;;
+			new)
+				_subCommand=$1; shift
+				return
+				;;
+			import)
+				_subCommand=$1; shift
+				return
+				;;
+			create)
+				_subCommand=$1; shift
+				return
+				;;
+			inspect)
+				_subCommand=$1; shift
+				return
+				;;
+			search)
+				_subCommand=$1
+				return
+				;;
+			browse)
+				_subCommand=$1
+				return
+				;;
+			*)
+				_error "${FUNCNAME}: '${1}' is not a subcommand"
+				return 1
+				;;
+		esac
+		shift
+	done
+}
+
+_setEnv() {
+  # get the name and absolute path of the calling script
+  _selfNAME=$(basename "${BASH_SOURCE[0]}")
+  _selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
+  _selfBASE=$(dirname "${_selfABSOLUTE}")
+  _selfCALL=${0}
+  _selfPWD=$(pwd)
+	# determine mode (notelos-integrated or standalone)
+	[[ -n "${_notelosHOME+x}" && ${_MODE:-} != "standalone" ]] && _MODE=integrated || _MODE=standalone
+	# note: the -x switch overrides the global _notelosHOME var 
+	# integrated mode only happens when global var _notelosHOME is available
+	# set up the working environment
+	if [[ ${_MODE} = "integrated" ]]; then
+		# set up integrated mode
+		_MASTER="${_notelosNAME}"
+		_BASE="${_notelosHOME}"
+		_NAME="${_NAME:-${_selfNAME}}"
+		_HOME="${_BASE}/${_NAME}"
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/.log/${_NAME}.log"
+		# inherit these (from notelos)
+		_DEBUG=${_notelosDEBUG}
+		_LOG=${_notelosLOG}
+		_SILENT=${_notelosSILENT}
+		_USERNAME=${_notelosUSERNAME}
+		_USEREMAIL=${_notelosUSEREMAIL}
+		_EDITOR=_notelosEdit
+	else
+		# set up standalone mode
+		_MASTER=self
+		_BASE="${_BASE:-$HOME}"
+		_NAME="${_NAME:-${_selfNAME}}"
+		_HOME=${_BASE}/${_NAME}
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/${_NAME}.log"
+		# inherit these
+		_DEBUG=${_DEBUG:-false}
+		_LOG=${_LOG:-false}
+		_SILENT=${_SILENT:-false}
+		_USERNAME=$(whoami)
+		_USEREMAIL="unknown"
+		_EDITOR=${EDITOR:-nano}
+	fi
+  [[ -f "${_LOGFILE:-}" ]] && _LOGGING=true || _LOGGING=false
+	_debug "$(declare -p _MODE)"
+	_debug "$(declare -p _MASTER)"
+	_debug "$(declare -p _NAME)"
+	_debug "$(declare -p _BASE)"
+	_debug "$(declare -p _HOME)"
+	_debug "$(declare -p _USERNAME)"
+	_debug "$(declare -p _USEREMAIL)"
+	_debug "$(declare -p _GITDIR)"
+	_debug "$(declare -p _LOGFILE)"
+	_debug "$(declare -p _DEBUG)"
+	_debug "$(declare -p _SILENT)"
+	_debug "$(declare -p _LOG)"
+	_debug "$(declare -p _LOGGING)"
+	export _MODE
+	export _MASTER
+	export _NAME
+	export _BASE
+	export _HOME
+	export _USERNAME
+	export _USEREMAIL
+	export _GITDIR
+	export _LOGFILE
+	export _DEBUG
+	export _SILENT
+	export _LOG
+	export _LOGGING
+}
+
+_checkExternalTools() {
+	# check for required tools, report accordingly
+	local _sufficient=true
+	for _required in "${_requiredCommands[@]}"; do
+		if ! hash "${_required}" 2>/dev/null; then
+			_warn "${FUNCNAME}: ${_required} not found"
+			_sufficient=false
+		else
+			: #_debug "${FUNCNAME}: ${_required} found"
+		fi
+	done
+	[ ${_sufficient} = true ] && return 0 || return 1
+}
+
+_checkHome() {
+  # check if the home dir exists
+  # check if it is a germ-created git
+  # return 1 if missing or not git
+  # mind condition: if subcommand is create
+	[[ ! -d "${_BASE}" && ${_MODE} = "notelos" ]] && { _error "notelos base not found"; exit 1; }
+	[[ -d "${_BASE}" ]] || { _error "base '${_BASE}' does not exist"; exit 1; }
+	local _base="${_BASE}"
+	local _dirName="${_NAME}"
+	local _dirPath="${_HOME}"
+	local _git_desc="${_dirPath}/.git/description"
+  if [ -d "${_dirPath}" ]; then
+    if [ -f "${_git_desc}" ]; then
+      # the git description file exists, lets check it for our marker
+      read -r _desc < "${_git_desc}"
+      if [[ ${_desc} == ${_MASTER}:${_NAME}:${_USERNAME}* ]]; then
+        # if repo does exist, return 0
+        _debug "${_git_desc} = ${_desc}"
+				return
+      else
+        # if repo does not exist, warn and exit
+        _error "${_dirPath} exists and is NOT a notelos-created repo"
+        return 1
+      fi
+    else
+      _error "${_dirPath} exists and is NOT a git repo"
+      _error "move existing ${_dirPath} before proceeding"
+      return 1
+    fi
+  else
+    # dir does not exist
+    _warn "'${_dirPath}' does not exist"
+    read -rsn1 -p "$(_ask 'create repo now? [y/n]')" _yn
+    echo
+    [[ ${_yn} != "y" ]] && { _warn "cannot run without a repo"; return 1;  }
+    _create || { _error "could not create ${_dirName} repo"; return 1; }
+    return
+  fi
+}
+
+############################
+# CREATE
+############################
+
+_create() {
+	# do not overwrite an existing anything
+	[[ -d "${_HOME}" ]] && { _error "'${_HOME}' exists"; return 1; }
+	[ ! -d "${_HOME}" ] && mkdir "${_HOME}"
+	git init -q -b main "${_HOME}"
+  git -C "${_HOME}" config user.name "${_USERNAME}"
+  git -C "${_HOME}" config user.email "${_USEREMAIL}"
+	# make the nmemon skeleton workflow dirs
+	mkdir "${_HOME}/mic"					# the live recording
+	mkdir "${_HOME}/queue"				# the queue of audio files
+	mkdir "${_HOME}/transcripts"	# whisper output
+	mkdir "${_HOME}/proofs"				# human proofed...can push
+	mkdir "${_HOME}/audio"				# audio files corresponding to transcripts
+	mkdir "${_HOME}/import"				# where imports are processed
+	# ignore recordings and import
+	echo "mic/" > "${_HOME}/.gitignore"
+	echo "queue/" >> "${_HOME}/.gitignore"
+	# add gitignore and make first commit
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
+  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
+	# put the installed signature in git description file
+  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
+  _time=$(date +%s)
+  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" > "${_HOME}/.git/description"
+}
+
+##################################
+# INSPECT
+##################################
+
+_inspect() {
+	tig -C${_GITDIR}
+}
+
+# usage:
+# _namePicker _newName   _getSourceList _validateNamePreview "prompt"    "special notes"
+# (function)  (nameref)     (fzf feed)      (fzf preview)     fxf prompt  (fzf header)    
+_namePicker () {
+	# $1 = nameref for return value
+	# $2 = input function (prints the list of existing whatever)
+	# $3 = validation function for fzf preview window (in which $1=query $2=selection)
+	# $4 = prompt string
+	# $5 = optional special instructions
+	# basically an fzf wrapper for name selection to be used globally
+	# single level only and single selection
+	local -n _return=$1
+	local _input=$2
+	local _preview=$3
+	local _prompt=$4
+	export _instructions="${5:-existing above, guidance right >}"
+	_transHeader() {
+		# add a second line to the header with context-specific info in yellow
+		# $1 string message to insert
+		printf "%s\n[\033[38;5;11m%s\033[0m]" "${_instructions}" "${1}"
+	}
+	_showHelp() {
+		printf '
++------------------------------------------------+
+|  mnemon proofing    |  hit "/" to close help   |
++---------------------+--------------------------+
+
+you are viewing the whisper-produced transcripts
+
+for each transcript there are only 3 options
+
+  1. delete    shift + "down arrow"
+  2. accept    shift + "up arrow"
+  3. edit      shift + "right"
+
+ctrl-p plays the audio
+
+delete removes the transcript permanently
+accept moves it to the /proofs directory
+edit opens an editor, and if the saved version differs,
+ the file is moves to /proofs
+
+keep a clean work space'
+	}
+	export -f _showHelp
+	export -f _transHeader
+	while true; do
+		_newName=$(fzf \
+			--no-multi \
+			--no-mouse \
+			--ansi \
+			--print-query \
+			--exact \
+			--info="hidden" \
+			--prompt="${_prompt}>" \
+			--header="${_instructions}" \
+			--bind="start:reload(${_input})" \
+			--bind="?:change-preview(_showHelp)" \
+			--bind="/:change-preview(${_preview} {q} {})" \
+			--bind="shift-up:transform-header(_transHeader 'accepted')+execute(mv ${_HOME}/transcripts/{} ${_HOME}/proofs/{})+reload(${_input})" \
+			--bind="shift-down:transform-header(_transHeader 'deleted')+execute(rm ${_HOME}/transcripts/{})+reload(${_input})" \
+			--bind="shift-right:become(_editProof {} </dev/tty >/dev/tty)" \
+			--bind="ctrl-c:transform-header(_transHeader 'ESC to abort')" \
+			--bind="ctrl-q:transform-header(_transHeader 'ESC to abort')" \
+			--bind="ctrl-p:transform-header(_transHeader 'playing')+execute(_play {})" \
+			--bind="ctrl-z:transform-header(_transHeader 'no ctrl-z')" \
+			--bind="backward-eof:transform-header(_transHeader 'ESC to abort')" \
+			--bind="esc:abort" \
+			--preview="${_preview} {q} {}" \
+			--preview-window=75%,wrap
+		);
+		query=$(echo "${_newName}" | head -n1)
+		selection=$(echo "${_newName}" | tail -n1)
+		#_debug "query is '${query}'"
+		#_debug "selection is '${selection}'"
+		_return="${query}:${selection}"
+		break
+	done
+}
+
+_play() {
+	_transcript=$1
+	_key=${_transcript%%.*}
+	_audio=${_HOME}/audio/${_key}.wav
+	nohup ffplay -autoexit -nodisp "${_audio}" &
+}
+export -f _play
+
+_editProof() {
+	# $1 is the file in /transcripts
+	# cp the file to proofs
+	# if changed...rm the file in /transcripts
+	set -x
+	local _path="${_HOME}/transcripts/${1}"
+	cp "${_path}" "${_HOME}/proofs/${1}"
+	vim "${_HOME}/proofs/${1}"
+	if diff -q "${_path}" "${_HOME}/proofs/${1}" 2>/dev/null; then
+		# files are identical...
+		rm "${_HOME}/proofs/${1}"
+	else
+		rm "${_path}"
+	fi
+}
+export -f _editProof
+
+_previewEntry() {
+	# used by fzf during edit to display the germ 
+	#echo "query    : $1"
+	#echo "selection: $2"
+	#echo "----entity contents below---------"
+	if [[ -z "${2}" ]]; then
+		echo "no such entity"
+	else
+		cat "${_HOME}/transcripts/${2}"
+	fi
+}
+export -f _previewEntry
+
+# run the dictate window
+_shell() {
+	#local _recordingState="waiting"
+	local _recordingState
+	local _recording_pid=""
+	local _transcriptionState="waiting"
+	local _transcription_pid=""
+	# states: waiting, recording, paused
+	_cStat() {
+		[[ "${1}" =~ ^(recording) ]] && { tput blink; tput setaf 7; tput setab 1; }
+		[[ "${1}" =~ ^(waiting) ]] && tput setaf 3
+		[[ "${1}" =~ ^(paused) ]] && { tput blink; tput setaf 7; tput setab 1; }
+		[[ "${1}" =~ ^(unknown) ]] && { tput blink; tput setaf 2; }
+		[[ "${1}" =~ ^(importing) ]] && { tput blink; tput setaf 3; }
+		[[ "${1}" =~ ^(transcribing) ]] && { tput blink; tput setaf 4; }
+		echo -n "${1}"
+		tput sgr0
+	}
+	_getKey() {
+		# don't give out the same key twice
+		date +%s
+	}
+	_doRecord() {
+		# use wav...low cpu, large files...each are removed
+		local oFmt="wav"
+		local _key=$(_getKey)
+		local _file="${_key}.${oFmt}"
+		ffmpeg -loglevel error -progress - -nostats -hide_banner -f alsa -i default -sample_rate 44100 \
+		 	"${_HOME}/mic/${_file}"
+		_debug "ffmpeg recording ended..."
+		[[ -e "${_HOME}/mic/${_file}" ]] && mv "${_HOME}/mic/${_file}" "${_HOME}/queue/${_file}"
+	}
+	_doTranscribe() {
+		local _file=$1
+		local model="medium.en"
+		local _queue="${_HOME}/queue"
+		local _path="${_queue}/${_file}"
+		# suppress_tokens expects a comma separated list of token ids
+		# eg 0=!  ,=11  .=13  ?=30
+		whisper "${_path}" --language en --verbose False --model medium.en --suppress_tokens '' \
+		 	-o "${_HOME}/transcripts/." -f txt 2>&1 >/dev/null
+		#rm "${_path}"
+		[ ! -d "${_HOME}/audio" ] && mkdir "${_HOME}/audio"
+		mv "${_path}" "${_HOME}/audio/${_file}"
+		}
+	_showFile() {
+			[[ $(ls "${_HOME}/mic/") ]] || { echo "none"; return; }
+			local _file=$(ls "${_HOME}/mic/")
+			local _size=$(ls -l "${_HOME}/mic/${_file}" | awk '{print $5}')
+			echo "${_file} ${_size}"
+	}
+	_getState() {
+		if [[ -e "${_HOME}/mic/.state" ]]; then
+			_recordingState=$(cat "${_HOME}/mic/.state")
+			case ${_recordingState} in
+				recording)
+					_recording_coprocPID=$(cat "${_HOME}/mic/.recording_coprocPID")
+					_recording_ffmpegPID=$(cat "${_HOME}/mic/.recording_ffmpegPID")
+					RECORDING_PID=${_recording_coprocPID}
+					;;
+				paused)
+					_recordingState="paused"
+					;;
+				waiting)
+					_recordingState="waiting"
+					_recording_coprocPID=''
+					_recording_ffmpegPID=''
+					;;
+			esac
+		else
+			_recordingState="waiting"
+		fi
+		if [[ -e "${_HOME}/import/.state" ]]; then
+			_importingState=$(cat "${_HOME}/import/.state")
+			_transcribingState="transcribing"
+			_transcribing_coprocPID=$(cat "${_HOME}/import/.transcribing_coprocPID")
+			_transcribing_whisperPID=$(cat "${_HOME}/import/.transcribing_whisperPID")
+			TRANSCRIBING_PID=${_transcribing_coprocPID}
+		else
+			_importingState=''
+			_transcribingState=''
+		fi
+		if [[ -e "${_HOME}/transcripts/.state" ]]; then
+			_transcribingState=$(cat "${_HOME}/transcripts/.state")
+			_transcribing_coprocPID=$(cat "${_HOME}/transcripts/.transcribing_coprocPID")
+			_transcribing_whisperPID=$(cat "${_HOME}/transcripts/.transcribing_whisperPID")
+			TRANSCRIBING_PID=${_transcribing_coprocPID}
+		fi
+
+	}
+	_showMenu() {
+		echo -ne "
+ 
+  DICTATE MACHINE:  (pid=$$)
+ 
+  mic state: $(_cStat ${_recordingState:-waiting})
+    coproc=${_recording_coprocPID:-none}
+    ffmpeg=${_recording_ffmpegPID:-none}
+    FILE/SIZE: $(_showFile)
+ 
+  whisper state: $(_cStat ${_transcribingState:-waiting})
+    coproc=${_transcribing_coprocPID:-none}
+    whisper=${_transcribing_whisperPID:-none}
+    
+    # in queue: '$(ls "${_HOME}/queue" | wc -l)'
+    # in transcripts: '$(ls "${_HOME}/transcripts" | wc -l)'
+    # in proofs: '$(ls "${_HOME}/proofs" | wc -l)'
+
+  importing: $(_cStat ${_importingState:-waiting})
+
+  r) record                          [begins recording from mic]
+  a) abort recording                 [deletes current recording]
+  s) stop and save                   [begins transcription]
+  b) browse transcriptions           [browse transcripts for proofing]
+  m) move proofs
+  i) import audio files 
+  q) quit
+
+  token words recognized: quote, unquote, hash, underscore, dash
+	metadata commands, eg, "hash g dash 1" => #g-1
+
+"
+	# trying to open a monitor to the recording and view ffmpeg stats ?
+  #looksee: '$(cat <&"${RECORDING[0]}" | grep ^total_size*)'
+  #looksee: '$(read -r output <&"${RECORDING[0]}"; echo $output | grep ^total_size*)'
+	#look: $(_watchCOPROC <&$"${RECORDING[0]}")
+	}
+	# main loop for menu screen
+	_getState
+	_showMenu
+	while read -r -s -n1 -p"$(_ask 'enter selection') " _selection; do
+		echo
+		case ${_selection} in
+			t)
+				_debug "test"
+				;;
+			r)
+				# don't allow multiple recordings
+				[[ ${_recordingState} != "waiting" ]] && continue
+				# don't record during import
+				[[ ${_importingState} = "importing" ]] && { _warn "import job running"; continue; }
+				# run the _doRecord function as a coprocess
+				coproc RECORDING { _doRecord; }
+				_debug "record: _coproc_pid=${RECORDING_PID}"
+				_debug "RECORDING stdout is ${RECORDING[0]}"
+				_debug "RECORDING stdin is ${RECORDING[1]}"
+				echo "recording" > ${_HOME}/mic/.state
+				echo ${RECORDING_PID} > ${_HOME}/mic/.recording_coprocPID
+				echo ${RECORDING[0]} > ${_HOME}/mic/.recording_coprocSTDOUT
+				echo ${RECORDING[1]} > ${_HOME}/mic/.recording_coprocSTDIN
+				# get the actual pid of the ffmpeg so we can signal it directly
+				# this command can fail if ffmpeg stops too quickly
+				_ffmpeg_pid=$(_trimString $(ps --no-headers -o pid --ppid ${RECORDING_PID}))
+				echo ${_ffmpeg_pid} > ${_HOME}/mic/.recording_ffmpegPID
+				#_recording_pid=$(ps --no-headers -o pid --ppid ${COPROC_PID})
+				_recording_pid=$(ps --no-headers -o pid --ppid ${RECORDING_PID})
+				# need to remove leading or trailing space for ps
+				_recording_pid=$(_trimString ${_recording_pid})
+				# trying to watch the recording process
+				#echo "looksee: $(tail -1 <&${RECORDING[0]})"
+				;;
+			a)
+				[[ ${_recordingState} != "recording" ]] && continue
+				# kill the recording and delete the audio file
+				kill -SIGINT ${_recording_ffmpegPID}
+				kill -SIGINT ${RECORDING_PID}
+				echo "waiting" > ${_HOME}/mic/.state
+				rm ${_HOME}/mic/.recording*
+				local _file=$(ls "${_HOME}/mic/")
+				rm "${_HOME}/mic/${_file}"
+				;;
+			s)
+				[[ ${_recordingState} != "recording" ]] && continue
+				# stop recording and begin the transcription
+				kill -SIGINT ${_recording_ffmpegPID}
+				kill -SIGINT ${RECORDING_PID}
+				echo "waiting" > ${_HOME}/mic/.state
+				rm ${_HOME}/mic/.recording*
+				local _file=$(ls "${_HOME}/mic/")
+				mv "${_HOME}/mic/${_file}" "${_HOME}/queue/${_file}"
+				#_transcriptionState="transcribing"
+				echo "transcribing" > "${_HOME}/transcripts/.state"
+				coproc TRANSCRIBING { _doTranscribe "${_file}"; \
+					rm "${_HOME}/transcripts/.state"; rm ${_HOME}/transcripts/.transcribing_*; }
+				_debug "whisper: _coproc_pid=${TRANSCRIBING_PID}"
+				_debug "TRANSCRIBING stdout is ${TRANSCRIBING[0]}"
+				_debug "TRANSCRIBING stdin is ${TRANSCRIBING[1]}"
+				echo ${TRANSCRIBING_PID} > "${_HOME}/transcripts/.transcribing_coprocPID"
+				echo ${TRANSCRIBING[0]} > "${_HOME}/transcripts/.transcribing_coprocSTDOUT"
+				echo ${TRANSCRIBING[1]} > "${_HOME}/transcripts/.transcribing_coprocSTDIN"
+				#coproc _doTranscribe "${_file}"
+				_transcription_pid=$(ps --no-headers -o pid --ppid ${TRANSCRIBING_PID})
+				_transcription_pid=$(_trimString ${_transcription_pid})
+				echo ${_transcription_pid} > "${_HOME}/transcripts/.transcribing_whisperPID"
+				;;
+			p)
+				_warn "pause needs to be hand made"; continue
+				# to do pause would be involved
+				# we would stop the recording
+				# we would clean the state and set to 'paused'
+				# we would record the file name and move it to the queue
+				# we would wait for UNPAUSE and start another _doRecord
+				# we would need to know the recording is not multi-part so that
+				#  when we STOP the previously PAUSED, we would have to concatenate
+				#  the files with ffmpeg before feeding to whisper
+				# too much work for too little gain
+				kill -SIGINT ${RECORDING_PID}
+				echo "paused" > ${_HOME}/mic/.state
+				rm ${_HOME}/mic/.recording*
+				local _file=$(ls "${_HOME}/mic/")
+				echo "${_file}" > "${_HOME}/mic/.paused_file"
+				# ORIGINAL PAUSE BELOW
+				## check the state of the recording process
+				#proc_state=$(ps --no-headers -o stat ${_recording_pid})
+				## toggle STOP/CONT signal to ffmpeg
+				#if [[ ${proc_state:0:1} == "T" ]]; then
+				#	# recording is paused; resume
+				#	kill -SIGCONT ${_recording_pid}
+				#	_recordingState="recording"
+				#elif [[ ${proc_state:0:1} == "S" ]]; then
+				#	# recording is live; pause
+				#	kill -SIGSTOP ${_recording_pid}
+				#	_recordingState="paused"
+				#else
+				#	# recording is in unknown state
+				#	_recordingState="unknown"
+				#fi
+				;;
+			b)
+				# browse the transcripts
+				[[ $(ls -A ${_HOME}/transcripts/) ]] || { _warn "no transcripts available"; continue; }
+				_namePicker _chosen "ls ${_HOME}/transcripts" _previewEntry "transcripts" "? for help" || :
+				;;
+			i)
+				# import
+				[[ ${_recordingState:-} != "waiting" ]] && continue
+				[[ ${_transcribingState:-} = "transcribing" ]] && continue
+				#local _keepAudioFiles=false
+				[ ! -d "${_HOME}/import" ] && mkdir "${_HOME}/import"
+				echo "importing" > ${_HOME}/import/.state
+				_dir=$(_finder)
+				_debug "import files from ${_dir}"
+				_fileList=()
+				for _file in ${_dir}/*.m4a; do
+					_fileList+=("${_file}")
+				done
+				_debug "$(declare -p _fileList)"
+				_debug "found ${#_fileList[@]} files"
+				_ask "enter name for import job "
+				read _importName
+				[ -z "${_importName}" ] && { _warn "import aborted; name needed"; rm ${_HOME}/import/.state; continue; }
+				[ -d "${_HOME}/import/${_importName}" ] && { _warn "name conflict"; rm ${_HOME}/import/.state; continue; }
+				mkdir -p "${_HOME}/import/${_importName}"
+				# extract creation_time and copy as <unixtime.filetype> into import dir
+				for _importFile in ${_fileList[@]}; do
+					file_type=${_importFile##*.}
+					c_time=$(ffprobe -v error -show_entries stream_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "${_importFile}")
+					c_unix=$(date -d "${c_time}" +%s)
+					duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${_importFile}")
+					echo "${_importFile} ${c_unix}" "${duration}" "${file_type}"
+					cp "${_importFile}" "${_HOME}/import/${_importName}/${c_unix}.${file_type}"
+				done
+				# extract metadata from each media file
+				for importedFile in "${_HOME}/import/${_importName}"/*; do
+					ffprobe -v error -print_format flat -show_format -show_streams "${importedFile}" > "${importedFile}_metadata.txt"
+				done
+				# build the list for whisper cli
+				_whisperList=()
+				for _f in ${_HOME}/import/${_importName}/*.${file_type}; do
+					_whisperList+=("${_f}")
+				done
+				# begin the whisper job
+				coproc WHISPER { whisper --language en --verbose False --model medium.en --suppress_tokens '' \
+					-o "${_HOME}/transcripts/." -f txt ${_whisperList[@]} 2>&1 >/dev/null; \
+					rm ${_HOME}/import/.state; rm ${_HOME}/import/.transcribing_*; }
+				_debug "whisper: _coproc_pid=${WHISPER_PID}"
+				_debug "WHISPER stdout is ${WHISPER[0]}"
+				_debug "WHISPER stdin is ${WHISPER[1]}"
+				echo ${WHISPER_PID} > "${_HOME}/import/.transcribing_coprocPID"
+				echo ${WHISPER[0]} > "${_HOME}/import/.transcribing_coprocSTDOUT"
+				echo ${WHISPER[1]} > "${_HOME}/import/.transcribing_coprocSTDIN"
+				_transcription_pid=$(ps --no-headers -o pid --ppid ${WHISPER_PID})
+				_transcription_pid=$(_trimString ${_transcription_pid})
+				echo ${_transcription_pid} > "${_HOME}/import/.transcribing_whisperPID"
+				#whisper --language en --verbose False --model medium.en --suppress_tokens '' \
+				#	-o "${_HOME}/transcripts/." -f txt ${_whisperList[@]} 2>&1 >/dev/null
+				;;
+				# import workflow
+				# OPTIONS...keep audio file (vs discard)
+				# use finder to locate a directory with audio files ready to import
+				# count, itemize, measure each one
+				# create state files with this catalog info
+				# - file path
+				# - file type
+				# - file size
+				# - file order
+				# check with user the data and order is correct (maybe not)
+				# ask user for import name (like source in germ)
+				# create mktemp /tmp/dir workspace
+				# for each file
+				# get a unique <unixtime> key
+				# copy file to /tmp/ as <unixtime>.<filetype>
+				# extract the file metadata
+				# ffprobe -print_format json -show_format -show_streams -hide_banner -i 1.m4a
+				# save it as /import/<file>
+				# NOTE: audio file metadata from iphone includes:
+				# - creation_time
+				# - duration
+				# - title (user can change file name in iphone)
+				# - filename
+				# - encoder (includes iphone's name)
+				# 
+			q)
+				return
+				;;
+		esac
+		# check if the recording is still going
+		#if [[ ! -z ${_recording_pid} ]]; then
+		#	[[ $(ps --no-headers ${_recording_pid}) ]] || { _recordingState="waiting"; _recording_pid=''; }
+		#fi
+		# check if the whisper job is still running
+		if [[ ! -z ${_transcription_pid} ]]; then
+			[[ $(ps --no-headers ${_transcription_pid}) ]] || { _transcriptionState="waiting"; _transcription_pid=''; }
+		fi
+		_getState
+		_showMenu
+	done
+}
+
+
+main() {
+	# read all the poositional parameters
+  _getOpts "${@}"
+  # setup the environment after processing all command line parameters
+  _setEnv
+  # validate the environment (external tools required)
+  _checkExternalTools || { _error "cannot run until these problems are resolved"; return 1; }
+  # check for the working directory
+  _checkHome || { _error "cannot run without a working environment"; return 1;  }
+  # enter custom shell if no arguments
+  [ -z "${_subCommand:-}" ] && _shell
+  # otherwise, pass the commands to the called "command"
+  [[ -n "${_subCommand:-}" ]] && _debug "now calling the eval to run '${_subCommand:-}'"
+  [[ -n "${_subCommand:-}" ]] && eval _"${_subCommand}" || :
+}
+main "${@}"
