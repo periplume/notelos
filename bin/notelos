@@ -483,13 +483,13 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 		echo -ne "
 
   h    show help                       === ${red}dsink${reset} ===============
-  -    -----------------------         m  mount      -  restore
-  d    docjohnson (dictionary)         u  unmount    -  compare
-  j    juice (resources)               f  format                 
-  -    -----------------------         b  backup     -  status?
-  g    germ                            ==========================
+       -----------------------         m  mount      -  restore
+  j    johnson (dictionary)            u  unmount    -  compare
+  -                                    f  format                 
+       -----------------------         b  backup     -  status?
+  g    germ (notes)                    ==========================
   -                                                                 
-  e    epistle                         alt-B to set term color scheme
+	e    epistle (letters)               alt-B to set term color scheme
   -    resume                          alt-i to enable online mode                                   
   -                                    alt-o to go offline                                           
   -    plume                           terminal dimensions: $(_termINFO)                   
@@ -497,7 +497,7 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
   -    noam                                                                            
   -    seed                            ====== ${cyan}debug${reset} ================                        
   -                                    alt-X   toggle bash debug
-	r    record (mnemon)                 alt-D   toggle debug
+  r    record (mnemon)                 alt-D   toggle debug
   -                                    alt-G   git status
   -    search                          0       print ENV
   q    quit                            alt-t   inspect git with tig
@@ -583,11 +583,8 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 			t)
 				_debug "test"
 				;;
-			w)
-				wordnet.studio || :
-				;;
 			j)
-				docjohnson || :
+				${_HOME}/.bin/johnson || :
 				;;
 			T)
 				# print terminal
