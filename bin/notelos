@@ -3,6 +3,11 @@
 # source: https://github.com/periplume/notelos.git
 # author: jason@bloom.us
 
+#TODO color change not working correctly
+# ran alt-B...toggled to light...adjusted fg,bg,cursor
+# saved...exited...terminal was restored...
+# started back up...colors changed to dark theme (as if toggled)
+
 # SCRIPT AND SHELL SETTINGS
 set -o errexit
 set -o nounset
@@ -37,6 +42,8 @@ _notelosLOG=false
 # command line parameters are processed, ie modified by flags
 # see the _fLOG function in notelos-lib.sh
 _fLOG
+
+# TODO note that the toggle debug does not work here as it does in germ
 
 ###########################
 # PREREQUISITES
@@ -214,12 +221,15 @@ _setEnv() {
   _debug "script base dir is '${_selfBASE}'"
 	_debug "caller's current working dir (\$pwd) is '${_selfPWD}'"
 	# determine the home
+	# TODO use hueristic to determine _notelosNAME, ie look at absolute path
+	# and read down from script name (notelos) through .bin to the actual
+	# _notelosHOME...and then set _notelosNAME to this
 	_notelosHOME="${_notelosBASE}/${_notelosNAME}"
   _debug "${FUNCNAME[0]} _notelosNAME=${_notelosNAME}"
   _debug "${FUNCNAME[0]} _notelosBASE=${_notelosBASE}"
   _debug "${FUNCNAME[0]} _notelosHOME=${_notelosHOME}"
   _debug "${FUNCNAME[0]} _notelosLAB=${_notelosLAB}"
-  # set up git path and command
+  # set up git path
 	_notelosGITDIR="${_notelosHOME}/.git"
   _debug "${FUNCNAME[0]} git version: '$(git -v)'"
   _debug "${FUNCNAME[0]} git dir: '${_notelosGITDIR}'"
@@ -418,9 +428,10 @@ _shell() {
 	}
 	_displayWelcome() {
 		echo -ne "
-   ${yellow}**${cyan}${_notelosNAME}${reset}${yellow}**${reset}
+   ${yellow}**${cyan} noΤΈΛΟΣ : ${_notelosNAME} : NOτέλος ${reset}${yellow}**${reset}
                              
-       type ${green}h${reset} for guidance
+       type ${green}?${reset} for menu
+       type ${yellow}h${reset} for guidance
        type ${red}q${reset} to quit
 
 "
@@ -438,24 +449,57 @@ _shell() {
 			|| _lin=${green}${lines}${reset}
 		echo $_col:$_lin
 	}
+	_printGuidance() {
+		echo -ne "
+how to use this thing...a digital room of one's own
+
+main user commands on the left, these are the tools
+- germ is for keeping notes and notebooks
+- epistle is for writing letters
+- resume is for a single document management and publishing
+- plume is for a set of texts
+- seed is akin to marginalia or book reports (notes about specific books)
+(these are how the tools were conceived...use them as you please)
+
+the resource tools include
+- docjohnson which has a number of dictionary-like resources
+- juice extends the dictionary idea to references, eg shakespeare and king james
+- search does the same with anything you save
+
+the dsink commands to the right manage media for data redundancy
+- format waits for you to insert a new usb disk
+  after some sanity and safety checks...it encrypts and formats
+- mount and unmount assumes a formatted disk
+- backup synchronizes the notelos datastore to a mounted dsink usb disk
+- to change the terminal colors, use alt-B
+
+the debug commands provide some visibility into whats going on under the covers
+down there everything is saved into git repositories
+
+WARNING: this is a prototype and therefore likely broken in unpredictable ways
+"
+	}
 	_printShellUsage() {
 		echo -ne "
 
-  ?    show help                       === ${red}dsink${reset} ===============
-  -    -----------------               m  mount      x  restore
-  j    docjohnson (dictionary)         u  unmount    y  compare
-  J    juice (resources)               f  format     z  something
-  -    -----------------               b  backup     -  status?
+  h    show help                       === ${red}dsink${reset} ===============
+  -    -----------------------         m  mount      -  restore
+  d    docjohnson (dictionary)         u  unmount    -  compare
+  j    juice (resources)               f  format                 
+  -    -----------------------         b  backup     -  status?
   g    germ                            ==========================
-  e    epistle                         alt-B for term color setting
-  r    resume                          alt-i/alt-o for ${green}i${reset}nternet or n${red}o${reset}t
-  p    plume                           terminal dimensions: $(_termINFO) CAPS:$(_capDETECT)
-  n    noam                                                                            
-  -    -                               ====== ${cyan}debug${reset} ================                        
-  -    -                               alt-X   toggle bash debug
-  -    -                               alt-D   toggle debug
-  -    -                               alt-G   git status
-  s    search                          0       print ENV
+  -                                                                 
+  e    epistle                         alt-B to set term color scheme
+  -    resume                          alt-i to enable online mode                                   
+  -                                    alt-o to go offline                                           
+  -    plume                           terminal dimensions: $(_termINFO)                   
+  -                                    CAPSLOCK:$(_capDETECT)
+  -    noam                                                                            
+  -    seed                            ====== ${cyan}debug${reset} ================                        
+  -                                    alt-X   toggle bash debug
+	r    record (mnemon)                 alt-D   toggle debug
+  -                                    alt-G   git status
+  -    search                          0       print ENV
   q    quit                            alt-t   inspect git with tig
 
 
@@ -464,12 +508,10 @@ _shell() {
 	# main shell prompt function
 	_mainPrompt() {
 	#
-	# ignore ctrl+\ ctrl+z and ctrl+c
+	# catch and ignore all ctrl+\ ctrl+z and ctrl+c
 	trap '' SIGQUIT SIGTSTP SIGINT SIGTERM
-	# the above caused me grief...because i could not send SIGINT to dsink format
-	# allow it during dsink format (or any interactive command)
+	# set the prompt
 	_p() {
-		# sets the prompt
 		# colors cannot derive from tput here...as 'read -e' becomes confused
 		reset=$'\001\e[0m\002'
 		red=$'\001\e[00;31m\002'
@@ -482,17 +524,21 @@ _shell() {
 		# set i to green (ONLINE) or red (OFFLINE)
 		[ ${_notelosONLINE} = "true" ] && _on=$'\001\e[00;32m\002'i$'\001\e[0m\002' || \
 			_on=$'\001\e[00;31m\002'i$'\001\e[0m\002'
+		# this is all placeholder for a fuller expression of data redundancy status
 		_data="$(_getRF-1)$(_getRF-2)$(_getRF-3)$(_getRF-4)$(_getRF-5)"
 		echo -n "${_cH}${_notelosNAME}${reset}:${_cU}${_notelosUSERNAME}${reset} [${_data}:$(_getDsinkMedia)] $_on > "
 	}
 	local __input
 	# simple one character interface
-	# notice we catch errors and return true instead...to stay in the loop
+	# notice we catch read errors and return true instead...to stay in the loop
 	while read -rsn1 -p "$(_p)" __input || true; do
 	echo
 		case ${__input} in
-			h|\?)
+			\?)
 				_printShellUsage
+				;;
+			h)
+				_printGuidance
 				;;
 			0)
 				printenv | grep "^_notelos"
@@ -509,6 +555,9 @@ _shell() {
 			u)
 				dsink unmount
 				;;
+			r)
+				${_notelosHOME}/.bin/mnemon || { _warn "an error occurred in mnemon"; continue; }
+				;;
 			f)
 				# temporarily allow ctrl-c (SIGINT) for 'dsink format'
 				trap - SIGINT
@@ -517,7 +566,6 @@ _shell() {
 				;;
 			g)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
-				clear
 				#germ || { _warn "an error occurred in germ"; continue; }
 				${_notelosHOME}/.bin/germ || { _warn "an error occurred in germ"; continue; }
 				;;
@@ -527,11 +575,13 @@ _shell() {
 				;;
 			r)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
-				clear
 				resume || :
 				;;
 			s)
 				_search || :
+				;;
+			t)
+				_debug "test"
 				;;
 			w)
 				wordnet.studio || :
@@ -671,21 +721,21 @@ _shell() {
 								;;
 							"Q")
 								# secret emergency quit key combo
-								_warn "alt-q triggered...quitting"
+								_warn "alt-Q triggered...quitting"
 								exit 1
 								;;
 							*)
-								echo "escape sequence ($_escKey)"
+								echo "escape sequence read ($_escKey)"
 								;;
 						esac
 				fi
 				read -rsn6 -t .002 || continue
 				;;
 			$'\177')
-				echo "backspace key can be made useful"; continue
+				echo "backspace read; use 'q' to quit"; continue
 				;;
 			$'\04')
-				echo "ctrl-d can be made useful"; continue
+				echo "ctrl-d read: use 'q' to quit"; continue
 				;;
 			*)
 				continue
