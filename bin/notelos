@@ -489,7 +489,7 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
        -----------------------         b  backup     -  status?
   g    germ (notes)                    ==========================
   -                                                                 
-	e    epistle (letters)               alt-B to set term color scheme
+  e    epistle (letters)               alt-B to set term color scheme
   -    resume                          alt-i to enable online mode                                   
   -                                    alt-o to go offline                                           
   -    plume                           terminal dimensions: $(_termINFO)                   
@@ -584,7 +584,7 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 				_debug "test"
 				;;
 			j)
-				${_HOME}/.bin/johnson || :
+				${_notelosHOME}/.bin/johnson || :
 				;;
 			T)
 				# print terminal
