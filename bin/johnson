@@ -1,0 +1,606 @@
+#!/usr/bin/env bash
+# file: johnson
+# source: https://github.com/periplume/notelos.git
+# author: jason@bloom.us
+# description: dictionary, thesarus, and more
+
+# design notes
+# this should be a super tool
+# we have all sorts of input data to play with
+# lists
+#		-core list /usr/share/dict/words
+# 	-extended dwyl/english-words from github
+# lookups
+# 	-dict (on/off line)
+# 	-wik (online only)
+# add proverbs from macmillan
+# add all shakespeare
+# add gutenberg library collector function()
+# proverb lookup idea
+# the proverb txt file needs modifying...its structure is simple
+# HEADER includes subject
+# numbered line has the proverb
+# alternate last part of the proverb has the source
+# for fzf the best feed would be each proverb in the form
+# HEADER:"PROVERB TEXT.[OPTIONAL SOURCE]"
+# proverb fzf search should be bottom/top  
+
+# SCRIPT AND SHELL SETTINGS
+set -o errexit
+set -o nounset
+set -o pipefail
+
+###########################
+# PREREQUISITES
+###########################
+
+# required commands
+_requiredCommands=(git fzf curl rg dict wn gawk m4)
+_requiredFiles=(dict-moby-thesaurus)
+
+# requires wn (wordnet)
+# sudo apt install wordnet
+# requires gawk and m4 for colorit
+# requires dict-moby-thesaurus
+# download here: https://packages.ubuntu.com/bionic/all/dict-moby-thesaurus/download
+# install like this:
+# sudo dpkg -i ~/Downloads/dict-moby-thesaurus_1.0-6.4_all.deb
+
+###########################
+# LIBRARY
+###########################
+
+# source library commands and set up log/console
+# use the library file from the same directory if possible
+[[ -e "$(dirname $0)/notelos-lib.sh" ]] \
+  && source "$(dirname $0)/notelos-lib.sh" \
+  || source notelos-lib.sh
+
+###########################
+# LOGGING AND CONSOLE
+###########################
+
+# default initial debugging and logging settings
+# note: command line parameters can modify these
+# script debug toggle (set to true to enable default global debugging)
+_DEBUG=false
+# silent mode for scripting (supresses all output)
+_SILENT=false
+# logging facility
+_LOG=false
+
+# instantiate the log/mesg functions with defaults (these will be re-initialized
+# after reading positional parameters)
+_fLOG
+
+####################################
+# HELPER FUNCTIONS
+####################################
+
+_printUsage () {
+  cat << EOF
+usage: johnson [OPTIONS]
+
+options:
+ -h      print this usage info
+ -l      log commands and debug info to log file
+ -d      print debug info to stdout and/or log
+ -s      suppress all stdout/stderr
+ -v      print version number and exit
+ -x      force standalone mode
+
+alternate env settings:
+ -p <path>  set alternate base path
+
+commands:
+EOF
+_printCommands
+}
+
+_printCommands() {
+  cat <<  EOF
+ lookup         thats it
+EOF
+}
+
+_printInfo () {
+  cat << EOF
+johnson is a dictionary
+EOF
+}
+
+####################################
+# PARAMETER PROCESSING
+####################################
+
+_getOpts () {
+	# preserve the initial positional parameters
+	export _fullCommand="${@}"
+	_debug "full command is '${_fullCommand}'"
+	local OPTIND
+	# do not allow names for notelos or self to be names of germ commands
+	_isCommand() {
+		local _allowed=true
+		local _commandList
+		_commandList=$(_printCommands | cut -f2 -d' ')
+		for _command in ${_commandList}; do
+      [[ "${_command}" = "${1}" ]] && _allowed=false 
+    done
+    [[ ${_allowed} = "true" ]] || return 1
+  }
+	while getopts ":hsdlxva:p:" flag ; do
+		case ${flag} in 
+			h)
+				_printInfo; _printUsage; exit 0
+				;;
+			p)
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is    NOT a flag ($OPTARG)"; exit 1; }
+				_BASE=${OPTARG}
+				_warn "using alt path '${_BASE}'"
+				;;
+ 	    s)
+				_debug "${FUNCNAME[0]}: enabling silent mode with flag -$flag"
+ 	      _SILENT=true
+				;;
+			d)
+				_debug "${FUNCNAME[0]}: enabled debug mode with flag -$flag"
+				_DEBUG=true
+				;;
+			l)
+				_debug "${FUNCNAME[0]}: enabled log mode with flag -$flag"
+				_LOG=true
+				;;
+			x)
+        _debug "${FUNCNAME[0]}: running in standalone mode with -$flag"
+        _MODE=standalone
+        ;;
+			v)
+				_info "${green}verion${reset}: beta"; exit 0
+				;;
+			?)
+				_error "invalid global option: -${OPTARG}"; exit 1
+				;;
+		esac
+	done
+	shift $((OPTIND - 1)); OPTIND=1
+	# preserve the full subcommand with its parameters
+	export _subCommandParams="${@}"
+	# look for the subcommand and check for its options
+	while ((${#})); do
+		case ${1} in
+			help)
+				_printInfo; _printUsage; exit 0
+				;;
+			lookup)
+				_subCommand=$1
+				return
+				;;
+			*)
+				_error "${FUNCNAME}: '${1}' is not a subcommand"
+				return 1
+				;;
+		esac
+		shift
+	done
+}
+
+_setEnv() {
+  # get the name and absolute path of the calling script
+  _selfNAME=$(basename "${BASH_SOURCE[0]}")
+  _selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
+  _selfBASE=$(dirname "${_selfABSOLUTE}")
+  _selfCALL=${0}
+  _selfPWD=$(pwd)
+	# determine mode (notelos-integrated or standalone)
+	[[ -n "${_notelosHOME+x}" && ${_MODE:-} != "standalone" ]] && _MODE=integrated || _MODE=standalone
+	# note: the -x switch overrides the global _notelosHOME var 
+	# set up the working environment
+	if [[ ${_MODE} = "integrated" ]]; then
+		# set up integrated mode
+		_MASTER="${_notelosNAME}"
+		_BASE="${_notelosHOME}"
+		_NAME="${_NAME:-${_selfNAME}}"
+		_HOME="${_BASE}/.${_NAME}"
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/.log/${_NAME}.log"
+		# inherit these (from notelos)
+		_DEBUG=${_notelosDEBUG}
+		_LOG=${_notelosLOG}
+		_SILENT=${_notelosSILENT}
+		_USERNAME=${_notelosUSERNAME}
+		_USERFULLNAME=${_notelosUSERFULLNAME}
+		_USEREMAIL=${_notelosUSEREMAIL}
+		_EDITOR=_notelosEdit
+	else
+		# set up standalone mode
+		_MASTER=self
+		_BASE="${_BASE:-$HOME}"
+		_NAME="${_NAME:-${_selfNAME}}"
+		_HOME=${_BASE}/${_NAME}
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/${_NAME}.log"
+		# inherit these
+		_DEBUG=${_DEBUG:-false}
+		_LOG=${_LOG:-false}
+		_SILENT=${_SILENT:-false}
+		_USERNAME=$(whoami)
+		_USERFULLNAME="unknown"
+		_USEREMAIL="unknown"
+		_EDITOR=${EDITOR:-nano}
+	fi
+  [[ -f "${_LOGFILE:-}" ]] && _LOGGING=true || _LOGGING=false
+	_debug "$(declare -p _MODE)"
+	_debug "$(declare -p _MASTER)"
+	_debug "$(declare -p _NAME)"
+	_debug "$(declare -p _BASE)"
+	_debug "$(declare -p _HOME)"
+	_debug "$(declare -p _USERNAME)"
+	_debug "$(declare -p _USERFULLNAME)"
+	_debug "$(declare -p _USEREMAIL)"
+	_debug "$(declare -p _GITDIR)"
+	_debug "$(declare -p _LOGFILE)"
+	_debug "$(declare -p _DEBUG)"
+	_debug "$(declare -p _SILENT)"
+	_debug "$(declare -p _LOG)"
+	_debug "$(declare -p _LOGGING)"
+	export _MODE
+	export _MASTER
+	export _NAME
+	export _BASE
+	export _HOME
+	export _USERNAME
+	export _USERFULLNAME
+	export _USEREMAIL
+	export _GITDIR
+	export _LOGFILE
+	export _DEBUG
+	export _SILENT
+	export _LOG
+	export _LOGGING
+}
+
+_checkExternalTools() {
+	# check for required tools, report accordingly
+	local _sufficient=true
+	for _required in "${_requiredCommands[@]}"; do
+		if ! hash "${_required}" 2>/dev/null; then
+			_warn "${FUNCNAME}: ${_required} not found"
+			_sufficient=false
+		else
+			: #_debug "${FUNCNAME}: ${_required} found"
+		fi
+	done
+	[ ${_sufficient} = true ] && return 0 || return 1
+}
+
+_checkHome() {
+  # check if the home dir exists
+  # check if it is a notelos-created git
+  # return 1 if missing or not git
+  # mind condition: if subcommand is create
+	[[ ! -d "${_BASE}" && ${_MODE} = "notelos" ]] && { _error "notelos base not found"; exit 1; }
+	[[ -d "${_BASE}" ]] || { _error "base '${_BASE}' does not exist"; exit 1; }
+	local _base="${_BASE}"
+	local _dirName="${_NAME}"
+	local _dirPath="${_HOME}"
+	local _git_desc="${_dirPath}/.git/description"
+  if [ -d "${_dirPath}" ]; then
+    if [ -f "${_git_desc}" ]; then
+      # the git description file exists, lets check it for our marker
+      read -r _desc < "${_git_desc}"
+			if [[ ${_desc} == ${_MASTER}:${_NAME}:${_USERNAME}* ]]; then
+        # if repo does exist, return 0
+        _debug "${_git_desc} = ${_desc}"
+				return
+      else
+        # if repo does not exist, warn and exit
+        _error "${_dirPath} exists and is NOT a studio-created repo"
+        return 1
+      fi
+    else
+      _error "${_dirPath} exists and is NOT a git repo"
+      _error "move existing ${_dirPath} before proceeding"
+      return 1
+    fi
+  else
+    # dir does not exist
+    _warn "'${_dirPath}' does not exist"
+    read -rsn1 -p "$(_ask 'create repo now? [y/n]')" _yn
+    echo
+    [[ ${_yn} != "y" ]] && { _warn "cannot run without a repo"; return 1;  }
+    _create || { _error "could not create ${_dirName} repo"; return 1; }
+    return
+  fi
+}
+
+############################
+# CREATE
+############################
+
+_create() {
+  # do not overwrite an existing anything
+  [[ -d "${_HOME}" ]] && { _error "'${_HOME}' exists"; return 1; }
+  [ ! -d "${_HOME}" ] && mkdir "${_HOME}"
+  git init -q -b main "${_HOME}"
+  git -C "${_HOME}" config user.name "${_USERNAME}"
+  git -C "${_HOME}" config user.email "${_USEREMAIL}"
+  # make the johnson working dirs
+  mkdir "${_HOME}/cache"          # the live recording
+  mkdir "${_HOME}/resource"        # the queue of audio files
+  # ignore cache
+  echo "cache/" > "${_HOME}/.gitignore"
+  # add gitignore and make first commit
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
+  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
+  # put the installed signature in git description file
+  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
+  _time=$(date +%s)
+  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" > "${_HOME}/.git/description"
+	read -rsn1 -p "$(_ask 'download extra resources? [y/n] ')" _yn
+	echo
+	[[ ${_yn} != "y" ]] && { _warn "add this option later"; return; }
+	_downloadResources
+}
+
+_downloadResources() {
+	local _library="${_HOME}/resource"
+	# fetch a huge english word list (used to seed the dictionary)
+	_gitFetch https://github.com/dwyl/english-words "${_library}/english-words"
+
+	# get johnson txt
+	local _johnsonDic="https://archive.org/stream/johnsonsenglishd00joh/johnsonsenglishd00joh_djvu.txt"
+	if [ ! -e "${_library}/johnson.txt" ]; then
+		curl -o "${_library}/johnson.txt" "${_johnsonDic}"
+	fi
+
+	# get the macmillans proverbs maxims and phrases text (which will need help)
+	local _macmillan="https://ia804502.us.archive.org/30/items/proverbsmaximsph00chri3/proverbsmaximsph00chri3_djvu.txt"
+	if [ ! -e "${_library}/proverbs-maxims.txt" ]; then
+		curl -o "${_library}/proverbs-maxims.txt" "${_macmillan}"
+	fi
+
+	# get shakespeare complete
+	local _shakes="https://www.gutenberg.org/cache/epub/100/pg100.txt"
+	if [ ! -e "${_library}/shakespeare.txt" ]; then
+		curl -o "${_library}/shakespeare.txt" "${_shakes}"
+	fi
+
+	# get king james
+	local _kingjames="https://www.gutenberg.org/cache/epub/10/pg10.txt"
+	if [ ! -e "${_library}/kingjames.txt" ]; then
+		curl -o "${_library}/kingjames.txt" "${_kingjames}"
+	fi
+}
+
+
+# fetch the huge wordlist from git
+_gitFetch() {
+	local repo_url=$1
+	local repo_dir=$2
+	if [ -d "$repo_dir" ]; then
+		_info "updating ${repo_dir}..."
+		(cd "${repo_dir}" && git pull)
+	else
+		_info "cloning ${repo_url} into ${repo_dir}"
+		git clone "${repo_url}" "${repo_dir}"
+	fi
+}
+
+_cycleView() {
+	# use indexed array to define the possible views to cycle through
+	declare -a _allViews=( dict-gcide dict-moby wordnet wik )
+	declare -A _viewCommands
+	_viewCommands[dict-gcide]="dict -d gcide $1 | colorit"
+	_viewCommands[dict-moby]="dict -d moby-thesaurus $1 | colorit"
+	_viewCommands[wordnet]="wn $1 -over | sed 's/$1/\x1b[32m$1\x1b[0m/g'"
+	_viewCommands[wik]="_wikGet $1"
+	_wikGet() {
+		[ ${_notelosONLINE} = "false" ] && { echo "OFFLINE"; return; }
+		word="$1"
+		wik_url="https://en.wiktionary.org/wiki/$word"
+		# we use lynx to grab the page (without links) and let sed filter out all
+		# the title page crap until we find the ^English line...which seems to be
+		# the right pattern to start from...then pipe it to colorit (which i think
+		# uses ansi to colorize the text (not well) so the fzf preview window can
+		# display some color
+		lynx -dump -nolist -nonumbers -force_html "https://en.wiktionary.org/wiki/$word" | sed \
+			-n '/^English/,$p' | colorit
+		# lynx definitely does not display itself in the fzf preview window
+		#lynx -nolist -cookies=off "https://en.wiktionary.org/wiki/$word"
+	}
+	_wiktionGet() {
+		word="$1"
+		wik_url="https://en.wiktionary.org/wiki/$word"
+		page_content=$(curl -s "$wik_url")
+		defs=$(echo "$page_content" | grep -oP '<span class="toctext">[^<]*</span>' | sed 's/<[^>]*>//g')
+		if [ -z "${defs}" ]; then
+			echo "nothing found on wiktionary for '$word'"
+		else
+			echo "found definitions for '$word' on wiktionary"
+			echo "$defs"
+		fi
+	}
+	# set the local var (which we set if unset...or get from touch file if set)
+	local _currentView
+	local _currentIndex
+	#echo "length of _allViews list: '${#_allViews[@]}'"
+	# we use a local hidden file to keep state...no other way sadly
+	if [[ -e .currentView ]]; then
+		_currentView=$(cat .currentView)
+		#echo "current view is already set: '${_currentView}'"
+		# damn bash makes some things really difficult...give me the index of the
+		# current value in the list:
+		for i in "${!_allViews[@]}"; do
+			if [[ "${_allViews[$i]}" = "${_currentView}" ]]; then
+				_currentIndex=$i
+				#echo "_currentIndex is ${_currentIndex}"
+			fi
+		done
+		#echo "reset to the next index, or the first if this is the last"
+		_adjustedIndex=$((_currentIndex+1))	
+		if [[ ${_adjustedIndex} = ${#_allViews[@]} ]]; then
+			#echo "already at the last...set to the first"
+			_currentView=${_allViews[0]}
+			echo ${_currentView} > .currentView
+			#echo "current view set to ${_currentView}"
+		else
+			#echo "just increment by one"
+			((_adjustedIndex+1))
+			_currentView=${_allViews[${_adjustedIndex}]}
+			echo ${_currentView} > .currentView
+			#echo "current view set to ${_currentView}"
+		fi 
+		# now set it to the next, and if the current index is equal to the length
+		# (minding that the index is n-1, of course)
+	else
+		#echo "current view is not set; setting to first item"
+		_currentView=${_allViews%% *}
+		echo ${_currentView} > .currentView
+		#echo "current view set to ${_currentView}"
+	fi
+	echo "${_currentView}"
+	echo "==$(tput cols)======${_viewCommands[${_currentView}]}================"
+	eval "${_viewCommands[${_currentView}]}"
+}
+export -f _cycleView
+
+_contextReader() {
+	line=$1
+	word=$2
+	local _start=$((line - 7))
+	local _end=$((line + 7))
+	echo "line $1, start: ${_start}  end: ${_end}  query: $word"
+	echo "--------------------------------------------------------------------"
+	echo
+	sed -n "${_start},${_end}p" "${_HOME}/resource/kingjames.txt" | sed "s/${word}/\x1b[32m${word}\x1b[0m/g"
+}
+export -f _contextReader
+
+_juice() {
+	cd "${_HOME}/resource"
+	local RG_PREFIX="rg --column --line-number --no-heading --color=always --smart-case "
+	local _query=${1:-$(shuf -n1 /usr/share/dict/words)}
+	true | fzf --ansi --disabled --no-mouse --info=inline --query "${_query}" \
+		--bind "start:reload:${RG_PREFIX} {q}" \
+		--bind "change:reload:sleep 0.1; ${RG_PREFIX} {q} || true" \
+		--bind "alt-enter:unbind(change,alt-enter)+change-prompt(2. fzf> )+enable-search+clear-query" \
+		--color="bg:#222222,preview-bg:#333333,header:yellow" \
+		--color "hl:-1:underline,hl+:-1:underline:reverse" \
+		--prompt "1. ripgrep> " \
+		--delimiter : \
+		--preview 'batcat --color=always {1} --highlight-line {2}' \
+		--preview-window 'up,60%,border-bottom,+{2}+3/3,~3' \
+		--bind 'enter:become(vim {1} +{2})'
+}	
+export -f _juice
+
+# _lookup flow
+# determine terminal width
+# 	warn if
+#		set var (but if window resizes?)
+# get color scheme
+# 	color enabled?
+# 	how many?
+# 	dark or light
+# get main word list
+# get seed word (or provided as $1)
+# display main summary
+#   display ONLINE/OFFLINE
+#   shortest answer
+#		for the list of resources...
+#			list each and status 0/1
+#  *add api to johnson online
+
+_lookup() {
+	# $1 is the seed word to look up (optional)
+	local _view			# normal,constrained
+	local _width=$(tput cols)
+	# set FZF_DEFAULT_OPTIONS
+	_setPreview() {
+		if [ $_width -lt 100 ]; then
+		 	_view=constrained
+			export FZF_DEFAULT_OPTS="--preview-window=right,60%,border-thinblock,wrap,~2 --preview-label=constrained"
+		else
+			_view=normal
+			export FZF_DEFAULT_OPTS="--preview-window=right,70%,border-thinblock,wrap,~2 --preview-label=normal"
+		fi
+		}
+	_setPreview
+	_showHelp() {
+		printf '
++------------------------------------------------+
+|  johnson help       |  hit "/" to close help   |
++---------------------+--------------------------+
+
+ctrl-p cycles the lookup preview window
+ - wordnet
+ - dict moby
+ - wiktionary (online only)
+
+ctrl-e toggles the preview window
+
+ctrl-m loads proverbs and maxims
+ctrl-n loads shakespeare
+ctrl-o loads the king james
+
+ctrl-y context viewer
+ctrl-t juice
+
+keep johnson clean'
+  }
+	# set the master word list
+	if [[ -e "${_HOME}/resource/english-words/words.txt" ]]; then
+		local _wordList="${_HOME}/resource/english-words/words.txt"
+	else
+		local _wordList="/usr/share/dict/words"
+	fi
+	# set the query to arg 1 or choose random word if no arg
+	local _query=${1:-$(shuf -n1 /usr/share/dict/words)}
+	# feed the wordlist to fzf
+	cat "${_wordList}" | fzf \
+		--query=${_query} \
+		--no-mouse \
+		--info=inline \
+		--bind "ctrl-e:toggle-preview" \
+		--bind "tab:replace-query" \
+		--bind "ctrl-m:change-prompt(proverbs> )+hide-preview" \
+		--bind "ctrl-m:+reload(cat ${_HOME}/resource/proverbs-maxims.txt)" \
+		--bind "ctrl-n:change-prompt(shakes> )+hide-preview" \
+		--bind "ctrl-n:+reload(cat ${_HOME}/resource/shakespeare.txt)" \
+		--bind "ctrl-o:change-prompt(bible> )+hide-preview" \
+		--bind "ctrl-o:+reload(cat ${_HOME}/resource/kingjames.txt)" \
+		--bind "ctrl-y:+preview(_contextReader {n} {q})" \
+		--bind "ctrl-p:preview(_cycleView {q})" \
+		--bind "ctrl-t:become(_juice {q})" \
+		--color="bg:#222222,preview-bg:#333333,header:yellow" \
+		--header='references ->
+shift-arrows scrolls preview
+tab fill query from selected
+ctrl-p:cycle sources' \
+		--preview="wn {q} -over | sed 's/{q}/\x1b[32m{q}\x1b[0m/g'"
+}
+# with sed, we add ascii green to highlight the query string in the preview
+# window
+
+# cleanup all stateful files when exiting
+_cleanup() {
+	[[ -e .currentView ]] && rm .currentView
+}
+trap _cleanup EXIT
+
+main() {
+  # read all the poositional parameters
+  _getOpts "${@}"
+  # setup the environment after processing all command line parameters
+  _setEnv
+  # validate the environment (external tools required)
+  _checkExternalTools || { _error "cannot run until these problems are resolved"; return 1; }
+  # check for the working directory
+  _checkHome || { _error "cannot run without a working environment"; return 1;  }
+  # enter custom shell if no arguments
+  [ -z "${_subCommand:-}" ] && _lookup
+  # otherwise, pass the commands to the called "command"
+  [[ -n "${_subCommand:-}" ]] && _debug "now calling the eval to run '${_subCommand:-}'"
+  [[ -n "${_subCommand:-}" ]] && eval _"${_subCommand}" || :
+}
+main "${@}"
