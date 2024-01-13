@@ -331,6 +331,7 @@ _create() {
 	mkdir "${_HOME}/proofs"				# human proofed...can push
 	mkdir "${_HOME}/audio"				# audio files corresponding to transcripts
 	mkdir "${_HOME}/import"				# where imports are processed
+	mkdir "${_HOME}/state"				# where state is maintained
 	# ignore recordings and import
 	echo "mic/" > "${_HOME}/.gitignore"
 	echo "queue/" >> "${_HOME}/.gitignore"
@@ -471,7 +472,13 @@ export -f _previewEntry
 
 # run the dictate window
 _shell() {
-	#local _recordingState="waiting"
+	local _micSTATE
+	local _ffmpegSTATE
+	local _ffmpegPID
+	local _whisperSTATE
+	local _whisperPID
+	local _importSTATE
+	local _importPID
 	local _recordingState
 	local _recording_pid=""
 	local _transcriptionState="waiting"
@@ -480,6 +487,7 @@ _shell() {
 	_cStat() {
 		[[ "${1}" =~ ^(recording) ]] && { tput blink; tput setaf 7; tput setab 1; }
 		[[ "${1}" =~ ^(waiting) ]] && tput setaf 3
+		[[ "${1}" =~ ^(idle) ]] && tput setaf 3
 		[[ "${1}" =~ ^(paused) ]] && { tput blink; tput setaf 7; tput setab 1; }
 		[[ "${1}" =~ ^(unknown) ]] && { tput blink; tput setaf 2; }
 		[[ "${1}" =~ ^(importing) ]] && { tput blink; tput setaf 3; }
@@ -488,18 +496,22 @@ _shell() {
 		tput sgr0
 	}
 	_getKey() {
-		# don't give out the same key twice
+		# don't give out the same key twice (need to enforce this here with a sleep)
 		date +%s
 	}
 	_doRecord() {
-		# use wav...low cpu, large files...each are removed
+		# 
 		local oFmt="wav"
 		local _key=$(_getKey)
 		local _file="${_key}.${oFmt}"
-		ffmpeg -loglevel error -progress - -nostats -hide_banner -f alsa -i default -sample_rate 44100 \
-		 	"${_HOME}/mic/${_file}"
-		_debug "ffmpeg recording ended..."
-		[[ -e "${_HOME}/mic/${_file}" ]] && mv "${_HOME}/mic/${_file}" "${_HOME}/queue/${_file}"
+		[ ! -d "${_HOME}/log" ] && mkdir "${_HOME}/log"
+		[[ -e "${_HOME}/state/mic/recording" ]] && { _warn "recording in progress"; return; }
+		ffmpeg -loglevel warning -progress "${_HOME}/log/${_key}-ffmpeg.progress" -hide_banner -f alsa -i default -sample_rate 44100 \
+		 	"${_HOME}/mic/${_file}" 2>"${_HOME}/log/${_key}-ffmpeg.log" &
+		_ffmpegPID=$!
+		mkdir -p "${_HOME}/state/mic/recording"
+		mkdir -p "${_HOME}/state/mic/pid/${_ffmpegPID}"
+		#[[ -e "${_HOME}/mic/${_file}" ]] && mv "${_HOME}/mic/${_file}" "${_HOME}/queue/${_file}"
 	}
 	_doTranscribe() {
 		local _file=$1
@@ -509,193 +521,182 @@ _shell() {
 		# suppress_tokens expects a comma separated list of token ids
 		# eg 0=!  ,=11  .=13  ?=30
 		whisper "${_path}" --language en --verbose False --model medium.en --suppress_tokens '' \
-		 	-o "${_HOME}/transcripts/." -f txt 2>&1 >/dev/null
+		 	-o "${_HOME}/transcripts/." -f txt 2>&1 >"${_HOME}/log/${_key}-whisper.log"
 		#rm "${_path}"
 		[ ! -d "${_HOME}/audio" ] && mkdir "${_HOME}/audio"
 		mv "${_path}" "${_HOME}/audio/${_file}"
 		}
-	_showFile() {
-			[[ $(ls "${_HOME}/mic/") ]] || { echo "none"; return; }
-			local _file=$(ls "${_HOME}/mic/")
-			local _size=$(ls -l "${_HOME}/mic/${_file}" | awk '{print $5}')
-			echo "${_file} ${_size}"
+	_showFileSize() {
+			ffmpegFILE=$(basename "${_HOME}/state/mic/file"/*)
+			if [[ -e "${_HOME}/mic/${ffmpegFILE}" ]]; then
+				echo "$(ls -l "${_HOME}/mic/${ffmpegFILE}" | awk '{print $5}')"
+			else
+				echo "n/a"
+			fi
+	}
+	_showFileName() {
+			ffmpegFILE=$(basename "${_HOME}/state/mic/file"/*)
+			if [[ -e "${_HOME}/mic/${ffmpegFILE}" ]]; then
+				echo "${ffmpegFILE}"
+			else
+				echo "none"
+			fi
+	}
+	_checkQueue() {
+		[[ -e "${_HOME}/state/whisper/transcribing" ]] && return || true
+		# if file exists in queue, process it
+		if [ -n "$(ls ${_HOME}/queue 2>/dev/null)" ]; then
+			mkdir -p "${_HOME}/state/whisper/transcribing"
+			# get the oldest file
+			_file=$(ls ${_HOME}/queue/ | head -1)
+			_path="${_HOME}/queue/${_file}"
+			# run whisper as a coprocess
+			coproc WHISPER { whisper "${_path}" --language en --verbose False --model medium.en \
+				--suppress_tokens '' \
+				-o "${_HOME}/transcripts/." \
+				-f txt  2>&1 >"${_HOME}/log/whisper.log" || mkdir "${_HOME}/state/whisper/failed";
+				mv "${_path}" "${_HOME}/audio/${_file}";
+				rmdir "${_HOME}/state/whisper/transcribing";
+		 		rm -rf "${_HOME}/state/whisper/coproc";	}
+				mkdir -p "${_HOME}/state/whisper/coproc/${WHISPER_PID}"
+		else
+			_debug "no files in queue"
+		fi
 	}
 	_getState() {
-		if [[ -e "${_HOME}/mic/.state" ]]; then
-			_recordingState=$(cat "${_HOME}/mic/.state")
-			case ${_recordingState} in
-				recording)
-					_recording_coprocPID=$(cat "${_HOME}/mic/.recording_coprocPID")
-					_recording_ffmpegPID=$(cat "${_HOME}/mic/.recording_ffmpegPID")
-					RECORDING_PID=${_recording_coprocPID}
-					;;
-				paused)
-					_recordingState="paused"
-					;;
-				waiting)
-					_recordingState="waiting"
-					_recording_coprocPID=''
-					_recording_ffmpegPID=''
-					;;
-			esac
+		if [[ -e "${_HOME}/state/mic/recording" ]]; then
+			_recordingState="recording"
+			_recording_ffmpegPID=$(basename "${_HOME}/state/mic/pid"/*)
+		elif [[ -e "${_HOME}/state/mic/idle" ]]; then
+			_recordingState="idle"
+			_recording_ffmpegPID=''
 		else
-			_recordingState="waiting"
+			_recordingState="unknown"
+			_recording_ffmpegPID=''
 		fi
-		if [[ -e "${_HOME}/import/.state" ]]; then
-			_importingState=$(cat "${_HOME}/import/.state")
+		if [[ -e "${_HOME}/state/whisper/transcribing" ]]; then
 			_transcribingState="transcribing"
-			_transcribing_coprocPID=$(cat "${_HOME}/import/.transcribing_coprocPID")
-			_transcribing_whisperPID=$(cat "${_HOME}/import/.transcribing_whisperPID")
-			TRANSCRIBING_PID=${_transcribing_coprocPID}
+			_transcribing_coprocPID=$(basename "${_HOME}/state/whisper/coproc"/*)
 		else
-			_importingState=''
-			_transcribingState=''
+			_transcribingState="idle"
+			_transcribing_coprocPID=''
 		fi
-		if [[ -e "${_HOME}/transcripts/.state" ]]; then
-			_transcribingState=$(cat "${_HOME}/transcripts/.state")
-			_transcribing_coprocPID=$(cat "${_HOME}/transcripts/.transcribing_coprocPID")
-			_transcribing_whisperPID=$(cat "${_HOME}/transcripts/.transcribing_whisperPID")
-			TRANSCRIBING_PID=${_transcribing_coprocPID}
-		fi
-
 	}
-	_showMenu() {
-		echo -ne "
- 
-  DICTATE MACHINE:  (pid=$$)
- 
-  mic state: $(_cStat ${_recordingState:-waiting})
-    coproc=${_recording_coprocPID:-none}
-    ffmpeg=${_recording_ffmpegPID:-none}
-    FILE/SIZE: $(_showFile)
- 
-  whisper state: $(_cStat ${_transcribingState:-waiting})
-    coproc=${_transcribing_coprocPID:-none}
-    whisper=${_transcribing_whisperPID:-none}
-    
-    # in queue: '$(ls "${_HOME}/queue" | wc -l)'
-    # in transcripts: '$(ls "${_HOME}/transcripts" | wc -l)'
-    # in proofs: '$(ls "${_HOME}/proofs" | wc -l)'
-
-  importing: $(_cStat ${_importingState:-waiting})
-
-  r) record                          [begins recording from mic]
-  a) abort recording                 [deletes current recording]
-  s) stop and save                   [begins transcription]
-  b) browse transcriptions           [browse transcripts for proofing]
-  m) move proofs
-  i) import audio files 
-  q) quit
+	_printScreen() {
+		quenum=$(ls "${_HOME}/queue" | wc -l)
+		transnum=$(ls "${_HOME}/transcripts" | wc -l)
+		proofnum=$(ls "${_HOME}/proofs" | wc -l)
+		audnum=$(ls "${_HOME}/audio" | wc -l)
+		micstate=$(_cStat ${_recordingState})
+		whispstate=$(_cStat ${_transcribingState})
+		ffmpegpid=${_recording_ffmpegPID:-none}
+		transpid=${_transcribing_coprocPID:-none}
+		whisppid=${_transcribing_whisperPID:-none}
+		space=$(du -sh "${_HOME}" | awk '{print $1}')
+		#clear
+		printf "=====\033[1mDICTATE MACHINE\033[0m--------Μνήμων--(%s)-------pid:%10d==============o\n" $_NAME $$
+		printf "\n"
+		printf " %-10s %-20s %30s %s\n" "mic state:" $micstate "whisper state:" $whispstate
+		printf "  %-10s %-20s %17s %s\n" "ffmpeg pid:" $ffmpegpid "coproc pid:" $transpid 
+		printf "  %-10s %-20s %17s %s \n" "media:" $(_showFileName) "whisper pid:" $whisppid
+		printf "  size: %s\n" $(_showFileSize) 
+		printf "\no==============================================================================o\n"
+		printf "  %s(%s)     queue: %s     transcripts: %s    proofed: %s\n" $audnum $space $quenum $transnum $proofnum
+		printf "o------------------------------------------------------------------------------o\n"  
+		printf '
+ r) record                          [begins recording from mic]
+ a) abort recording                 [deletes current recording]
+ s) stop and save                   [saves current recording]
+ b) browse transcriptions           [browse transcripts for proofing]
+ m) move proofs                     [not implemented...push to?]
+ i) import audio files              [import audio files]
+ q) quit
 
   token words recognized: quote, unquote, hash, underscore, dash
 	metadata commands, eg, "hash g dash 1" => #g-1
+	                   eg, "hash oc dash put" => #oc-put
 
-"
+'
+
+	}
+
 	# trying to open a monitor to the recording and view ffmpeg stats ?
   #looksee: '$(cat <&"${RECORDING[0]}" | grep ^total_size*)'
   #looksee: '$(read -r output <&"${RECORDING[0]}"; echo $output | grep ^total_size*)'
 	#look: $(_watchCOPROC <&$"${RECORDING[0]}")
-	}
+
 	# main loop for menu screen
 	_getState
-	_showMenu
+	_printScreen
 	while read -r -s -n1 -p"$(_ask 'enter selection') " _selection; do
 		echo
 		case ${_selection} in
 			t)
-				_debug "test"
+				_inspect || :
 				;;
 			r)
-				# don't allow multiple recordings
-				[[ ${_recordingState} != "waiting" ]] && continue
-				# don't record during import
-				[[ ${_importingState} = "importing" ]] && { _warn "import job running"; continue; }
-				# run the _doRecord function as a coprocess
-				coproc RECORDING { _doRecord; }
-				_debug "record: _coproc_pid=${RECORDING_PID}"
-				_debug "RECORDING stdout is ${RECORDING[0]}"
-				_debug "RECORDING stdin is ${RECORDING[1]}"
-				echo "recording" > ${_HOME}/mic/.state
-				echo ${RECORDING_PID} > ${_HOME}/mic/.recording_coprocPID
-				echo ${RECORDING[0]} > ${_HOME}/mic/.recording_coprocSTDOUT
-				echo ${RECORDING[1]} > ${_HOME}/mic/.recording_coprocSTDIN
-				# get the actual pid of the ffmpeg so we can signal it directly
-				# this command can fail if ffmpeg stops too quickly
-				_ffmpeg_pid=$(_trimString $(ps --no-headers -o pid --ppid ${RECORDING_PID}))
-				echo ${_ffmpeg_pid} > ${_HOME}/mic/.recording_ffmpegPID
-				#_recording_pid=$(ps --no-headers -o pid --ppid ${COPROC_PID})
-				_recording_pid=$(ps --no-headers -o pid --ppid ${RECORDING_PID})
-				# need to remove leading or trailing space for ps
-				_recording_pid=$(_trimString ${_recording_pid})
-				# trying to watch the recording process
-				#echo "looksee: $(tail -1 <&${RECORDING[0]})"
+				[[ -e "${_HOME}/state/mic/recording" ]] && { _warn "recording in progress"; continue; }
+				[[ -d "${_HOME}/state/mic/idle" ]] && rmdir "${_HOME}/state/mic/idle"
+				mkdir -p "${_HOME}/state/mic/recording"
+				local oFmt="wav"
+				local _key=$(_getKey)
+				local _file="${_key}.${oFmt}"
+				[ ! -d "${_HOME}/log" ] && mkdir "${_HOME}/log"
+				ffmpeg -loglevel warning -progress "${_HOME}/log/${_key}-ffmpeg.progress" \
+					-hide_banner -f alsa -i default -sample_rate 44100 \
+					"${_HOME}/mic/${_file}" 2>"${_HOME}/log/${_key}-ffmpeg.log" &
+				_ffmpegPID=$!
+				mkdir -p "${_HOME}/state/mic/recording"
+				mkdir -p "${_HOME}/state/mic/pid/${_ffmpegPID}"
+				mkdir -p "${_HOME}/state/mic/file/${_file}"
+				mkdir -p "${_HOME}/state/mic/progressfile/${_key}-ffmpeg.progress"
+				mkdir -p "${_HOME}/state/mic/logfile/${_key}-ffmpeg.log"
 				;;
 			a)
-				[[ ${_recordingState} != "recording" ]] && continue
-				# kill the recording and delete the audio file
-				kill -SIGINT ${_recording_ffmpegPID}
-				kill -SIGINT ${RECORDING_PID}
-				echo "waiting" > ${_HOME}/mic/.state
-				rm ${_HOME}/mic/.recording*
-				local _file=$(ls "${_HOME}/mic/")
-				rm "${_HOME}/mic/${_file}"
+				# check for recording in progress
+				[[ -e "${_HOME}/state/mic/recording" ]] || { _warn "nothing to abort"; continue; }
+				# check for the pid dir in which the pid is stored as a dir
+				[[ -e "${_HOME}/state/mic/pid" ]] || { _warn "no pid found; problem"; continue; }
+				# get the ffmpeg pid and filename from state dir
+				ffmpegPID=$(basename "${_HOME}/state/mic/pid"/*)
+				ffmpegFILE=$(basename "${_HOME}/state/mic/file"/*)
+				# send INT signal to ffmpeg
+				kill -SIGINT ${ffmpegPID}
+				# remove pid info from state dir
+				rm -rf "${_HOME}/state/mic/pid/"
+				# change mic state  (could do this with mv)
+				rmdir "${_HOME}/state/mic/recording"
+				mkdir "${_HOME}/state/mic/idle"
+				# remove state file info
+				rm -rf "${_HOME}/state/mic/file"
+				# remove media file
+				rm "${_HOME}/mic/${ffmpegFILE}"
+				# remove log pointers
+				rm -rf "${_HOME}/state/mic/progressfile"
+				rm -rf "${_HOME}/state/mic/logfile"
 				;;
 			s)
-				[[ ${_recordingState} != "recording" ]] && continue
-				# stop recording and begin the transcription
-				kill -SIGINT ${_recording_ffmpegPID}
-				kill -SIGINT ${RECORDING_PID}
-				echo "waiting" > ${_HOME}/mic/.state
-				rm ${_HOME}/mic/.recording*
-				local _file=$(ls "${_HOME}/mic/")
-				mv "${_HOME}/mic/${_file}" "${_HOME}/queue/${_file}"
-				#_transcriptionState="transcribing"
-				echo "transcribing" > "${_HOME}/transcripts/.state"
-				coproc TRANSCRIBING { _doTranscribe "${_file}"; \
-					rm "${_HOME}/transcripts/.state"; rm ${_HOME}/transcripts/.transcribing_*; }
-				_debug "whisper: _coproc_pid=${TRANSCRIBING_PID}"
-				_debug "TRANSCRIBING stdout is ${TRANSCRIBING[0]}"
-				_debug "TRANSCRIBING stdin is ${TRANSCRIBING[1]}"
-				echo ${TRANSCRIBING_PID} > "${_HOME}/transcripts/.transcribing_coprocPID"
-				echo ${TRANSCRIBING[0]} > "${_HOME}/transcripts/.transcribing_coprocSTDOUT"
-				echo ${TRANSCRIBING[1]} > "${_HOME}/transcripts/.transcribing_coprocSTDIN"
-				#coproc _doTranscribe "${_file}"
-				_transcription_pid=$(ps --no-headers -o pid --ppid ${TRANSCRIBING_PID})
-				_transcription_pid=$(_trimString ${_transcription_pid})
-				echo ${_transcription_pid} > "${_HOME}/transcripts/.transcribing_whisperPID"
-				;;
-			p)
-				_warn "pause needs to be hand made"; continue
-				# to do pause would be involved
-				# we would stop the recording
-				# we would clean the state and set to 'paused'
-				# we would record the file name and move it to the queue
-				# we would wait for UNPAUSE and start another _doRecord
-				# we would need to know the recording is not multi-part so that
-				#  when we STOP the previously PAUSED, we would have to concatenate
-				#  the files with ffmpeg before feeding to whisper
-				# too much work for too little gain
-				kill -SIGINT ${RECORDING_PID}
-				echo "paused" > ${_HOME}/mic/.state
-				rm ${_HOME}/mic/.recording*
-				local _file=$(ls "${_HOME}/mic/")
-				echo "${_file}" > "${_HOME}/mic/.paused_file"
-				# ORIGINAL PAUSE BELOW
-				## check the state of the recording process
-				#proc_state=$(ps --no-headers -o stat ${_recording_pid})
-				## toggle STOP/CONT signal to ffmpeg
-				#if [[ ${proc_state:0:1} == "T" ]]; then
-				#	# recording is paused; resume
-				#	kill -SIGCONT ${_recording_pid}
-				#	_recordingState="recording"
-				#elif [[ ${proc_state:0:1} == "S" ]]; then
-				#	# recording is live; pause
-				#	kill -SIGSTOP ${_recording_pid}
-				#	_recordingState="paused"
-				#else
-				#	# recording is in unknown state
-				#	_recordingState="unknown"
-				#fi
+				# check for recording in progress
+				[[ -e "${_HOME}/state/mic/recording" ]] || { _warn "not recording"; continue; }
+				# check for the pid dir in which the pid is stored as a dir
+				[[ -e "${_HOME}/state/mic/pid" ]] || { _warn "no pid found; problem"; continue; }
+				# get the ffmpeg pid and filename from state dir
+				ffmpegPID=$(basename "${_HOME}/state/mic/pid"/*)
+				ffmpegFILE=$(basename "${_HOME}/state/mic/file"/*)
+				# send INT signal to ffmpeg
+				kill -SIGINT ${ffmpegPID}
+				# remove pid info from state dir
+				rm -rf "${_HOME}/state/mic/pid/"
+				# change mic state  (could do this with mv)
+				rmdir "${_HOME}/state/mic/recording"
+				mkdir "${_HOME}/state/mic/idle"
+				# remove state file info
+				rm -rf "${_HOME}/state/mic/file"
+				# move media file too queue
+				mv "${_HOME}/mic/${ffmpegFILE}" "${_HOME}/queue/${ffmpegFILE}"
+				# remove log pointers
+				rm -rf "${_HOME}/state/mic/progressfile"
+				rm -rf "${_HOME}/state/mic/logfile"
 				;;
 			b)
 				# browse the transcripts
@@ -704,6 +705,18 @@ _shell() {
 				;;
 			i)
 				# import
+				[ ! -d "${_HOME}/import" ] && mkdir "${_HOME}/import"
+				_dir=$(_finder)
+				for _file in ${_dir}/*; do
+					# get the unixtime
+					c_time=$(ffprobe -v error -show_entries stream_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "${_file}")
+					c_unix=$(date -d "${c_time}" +%s)
+					suffix=${_file##*.}
+					cp "${_file}" "${_HOME}/queue/${c_unix}.${suffix}"
+				done
+				;;
+			I)
+				# first draft import
 				[[ ${_recordingState:-} != "waiting" ]] && continue
 				[[ ${_transcribingState:-} = "transcribing" ]] && continue
 				#local _keepAudioFiles=false
@@ -782,25 +795,24 @@ _shell() {
 				# - encoder (includes iphone's name)
 				# 
 			q)
-				return
+				if [[ ${_recordingState} = "recording" ]]; then
+					_warn "recording live now"
+					read -rsn1 -p "$(_ask 'really quit now? [yn] ')" _yn
+					echo
+					[[ ${_yn} = "y" ]] && return || continue
+				else
+					return 0
+				fi
 				;;
 		esac
-		# check if the recording is still going
-		#if [[ ! -z ${_recording_pid} ]]; then
-		#	[[ $(ps --no-headers ${_recording_pid}) ]] || { _recordingState="waiting"; _recording_pid=''; }
-		#fi
-		# check if the whisper job is still running
-		if [[ ! -z ${_transcription_pid} ]]; then
-			[[ $(ps --no-headers ${_transcription_pid}) ]] || { _transcriptionState="waiting"; _transcription_pid=''; }
-		fi
 		_getState
-		_showMenu
+		_checkQueue
+		_printScreen
 	done
 }
 
-
 main() {
-	# read all the poositional parameters
+	# read all the positional parameters
   _getOpts "${@}"
   # setup the environment after processing all command line parameters
   _setEnv
