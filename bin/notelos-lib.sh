@@ -754,6 +754,7 @@ _notelosEdit() {
   local _file=${1}
 	vim -u "${_notelosHOME}/.config/vimrc" -c 'set syntax=markdown' "${_file}"
 }
+export -f _notelosEdit
 
 # FUN
 _superJob() {
@@ -1440,7 +1441,7 @@ _choosePrinter() {
 
 _sendToPrinter() {
 	# requires paps
-	# arg 1 = file (if absent...take stdin)
+	# arg 1 = file (if absent...take stdin: UNTESTED)
 	local _printer
 	local _what=${1:-stdin}
 	_printer=$(_choosePrinter) || { _warn "'${_printer}' not a valid printer"; return; }
@@ -1451,4 +1452,10 @@ _sendToPrinter() {
 	fi
 }
 
-
+_trimString() {
+	# Usage: trim_string "   example   string    "
+	# source https://github.com/dylanaraps/pure-bash-bible
+	: "${1#"${1%%[![:space:]]*}"}"
+	: "${_%"${_##*[![:space:]]}"}"
+	printf '%s\n' "$_"
+}

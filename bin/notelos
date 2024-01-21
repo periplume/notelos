@@ -325,6 +325,9 @@ _trapExit() {
 	# merge session branch
 	git -C "${_notelosHOME}" add "${_notelosHOME}/.state/session.${_session_end}"
 	git -C "${_notelosHOME}" commit -q -m "[session] closed (${_session_duration} seconds)"
+	# TODO
+	# do a backup if dsink is mounted
+	# then unmount dsink
 }
 
 ###############
@@ -423,7 +426,8 @@ _shell() {
 	_getDsinkMedia() {
 		# print the dsink media tag in green or print 'none' in red
 		local _dsinkMediaName
-		_dsinkMediaName="${green}$(dsink status -m)${reset}" || _dsinkMediaName="${red}none${reset}"
+		_dsinkMediaName="${green}$(${_notelosHOME}/.bin/dsink status -m)${reset}" || \
+			_dsinkMediaName="${red}none${reset}"
 		echo ${_dsinkMediaName}
 	}
 	_displayWelcome() {
@@ -483,21 +487,21 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 		echo -ne "
 
   h    show help                       === ${red}dsink${reset} ===============
-       -----------------------         m  mount      -  restore
-  j    johnson (dictionary)            u  unmount    -  compare
-  -                                    f  format                 
-       -----------------------         b  backup     -  status?
+       -----------------------         M  mount      -  restore
+  j    johnson (dictionary)            U  unmount    -  compare
+  -                                    F  format                 
+       -----------------------         B  backup     S  status
   g    germ (notes)                    ==========================
-  -                                                                 
+  -                                    alt-l to lock screen
   e    epistle (letters)               alt-B to set term color scheme
-  -    resume                          alt-i to enable online mode                                   
-  -                                    alt-o to go offline                                           
-  -    plume                           terminal dimensions: $(_termINFO)                   
+  -    resume                          alt-i to enable online mode
+  -                                    alt-o to go offline
+  -    plume                           terminal dimensions: $(_termINFO)
   -                                    CAPSLOCK:$(_capDETECT)
-  -    noam                                                                            
-  -    seed                            ====== ${cyan}debug${reset} ================                        
+  -    noam
+  -    seed                            ====== ${cyan}debug${reset} ================
   -                                    alt-X   toggle bash debug
-  r    record (mnemon)                 alt-D   toggle debug
+  m    record (mnemon)                 alt-D   toggle debug
   -                                    alt-G   git status
   -    search                          0       print ENV
   q    quit                            alt-t   inspect git with tig
@@ -522,7 +526,7 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 		_cU=$'\001\e[00;32m\002'		#user
 		_cS=$'\001\e[00;33m\002'		#source
 		# set i to green (ONLINE) or red (OFFLINE)
-		[ ${_notelosONLINE} = "true" ] && _on=$'\001\e[00;32m\002'i$'\001\e[0m\002' || \
+		[ ${_notelosONLINE:-false} = "true" ] && _on=$'\001\e[00;32m\002'i$'\001\e[0m\002' || \
 			_on=$'\001\e[00;31m\002'i$'\001\e[0m\002'
 		# this is all placeholder for a fuller expression of data redundancy status
 		_data="$(_getRF-1)$(_getRF-2)$(_getRF-3)$(_getRF-4)$(_getRF-5)"
@@ -546,23 +550,26 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 			q)
 				exit
 				;;
-			b)
-				dsink backup || { _warn "dsink backup failed"; continue; }
+			B)
+				${_notelosHOME}/.bin/dsink backup || { _warn "dsink backup failed"; continue; }
 				;;
-			m)
-				dsink mount || { _warn "could not mount dsink usb"; continue; }
+			M)
+				${_notelosHOME}/.bin/dsink mount || { _warn "could not mount dsink usb"; continue; }
 				;;
-			u)
-				dsink unmount
+			U)
+				${_notelosHOME}/.bin/dsink unmount
 				;;
-			r)
-				${_notelosHOME}/.bin/mnemon || { _warn "an error occurred in mnemon"; continue; }
+			S)
+				${_notelosHOME}/.bin/dsink || { _warn "dsink returned an error"; continue; }
 				;;
-			f)
+			F)
 				# temporarily allow ctrl-c (SIGINT) for 'dsink format'
 				trap - SIGINT
-				dsink format || :
+				${_notelosHOME}/.bin/dsink format || :
 				trap '' SIGINT
+				;;
+			m)
+				${_notelosHOME}/.bin/mnemon || { _warn "an error occurred in mnemon"; continue; }
 				;;
 			g)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
@@ -651,6 +658,9 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 								;;
 							"t")
 								tig -C"${_notelosGITDIR}"
+								;;
+							"l")
+								xdg-screensaver lock
 								;;
 							"X")
 								# toggle bash set -x

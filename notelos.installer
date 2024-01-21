@@ -14,7 +14,7 @@ _checkSudo() {
 	# check for sudo privledges (not exhaustive)
 	# return 0 if they seem to exist, otherwise 1
 	# we use timeout to kill sudo -v...then match the return of sudo
-	timeout -k .2 .2 sudo -v 2>/dev/null
+	timeout -k .2 .2 sudo -v > /dev/null 2>&1
 	_error=$?
 	# return of zero indicates we have an active sudo session
 	[[ ${_error} = 0 ]] && return 0
@@ -26,9 +26,12 @@ _checkSudo() {
 	return 1
 }
 
+
 _checkExternals() {
 	_required=(git fzf vim)
-	_recommended=(tig cargo vim-plug code-minimap minimap.vim)
+	_recommended=(tig paps cargo code-minimap)
+	_requiredFiles=(vim-plug minimap.vim)
+	_recommendedFiles=(vim-plug minimap.vim)
 	# TODO fix this for files eg vim-plug
 	_temp=$(mktemp -d)
 	for _required in "${_required[@]}"; do
@@ -79,6 +82,11 @@ _installExternals() {
 		tig)
 			_warn "no tig installer yet; do it yourself"
 			_info  "plain old apt-get works but requires sudo: apt-get install tig"
+			;;
+		paps)
+			# sudo apt install paps
+			_warn "no paps installer yet; do it yourself"
+			_info  "use 'sudo apt install paps'"
 			;;
 		cargo)
 			# installs all in $HOME...remove with 'rustup self uninstall'
@@ -241,24 +249,24 @@ _getOpts () {
 				;;
 			install)
 				_subCommand=$1; shift
-				while getopts ":b" flag; do
-					case ${flag} in
-						b)
-							# store the notelos suite of scripts in $HOME/bin
-							# TODO this should not be an option...otherwise confusing path
-							# problem emerges
-							_binIntegral=false
-							_warn "using '\$HOME/bin' for executables"
-							;;	
-						\?)
-				 			_error "${FUNCNAME[0]}: unknown flag '-${OPTARG}'"; exit 1
-							;;
-						:)
-							_error "${FUNCNAME[0]}: arg required for '-${OPTARG}'"; exit 1
-						;;
-					esac
-				done
-				shift $((OPTIND - 1))
+				#while getopts ":b" flag; do
+				#	case ${flag} in
+				#		b)
+				#			# store the notelos suite of scripts in $HOME/bin
+				#			# TODO this should not be an option...otherwise confusing path
+				#			# problem emerges
+				#			_binIntegral=false
+				#			_warn "using '\$HOME/bin' for executables"
+				#			;;	
+				#		\?)
+				# 			_error "${FUNCNAME[0]}: unknown flag '-${OPTARG}'"; exit 1
+				#			;;
+				#		:)
+				#			_error "${FUNCNAME[0]}: arg required for '-${OPTARG}'"; exit 1
+				#		;;
+				#	esac
+				#done
+				#shift $((OPTIND - 1))
 				;;
 			upgrade)
 				_subCommand=$1; shift
@@ -312,14 +320,15 @@ _setEnv() {
 	_notelosBASE=$(readlink -f "${_altBASE:-${HOME}}")
 	_notelosHOME=$(realpath "${_notelosBASE}/${_notelosNAME}")
 	_notelosLAB=${_selfBASE}
-	# settle the location of executable scripts and PATH
-	if [ "${_binIntegral:-true}" = true ]; then
-		# all scripts deployed into .bin directory within _notelosHOME
-		_notelosBIN="${_notelosHOME}/.bin"
-	else
-		# user prefers $HOME/bin
-		_notelosBIN="${HOME}/bin"
-	fi
+	_notelosBIN="${_notelosHOME}/.bin"
+	## settle the location of executable scripts and library and PATH
+	#if [ "${_binIntegral:-true}" = true ]; then
+	#	# all scripts deployed into .bin directory within _notelosHOME
+	#	_notelosBIN="${_notelosHOME}/.bin"
+	#else
+	#	# user prefers $HOME/bin
+	#	_notelosBIN="${HOME}/bin"
+	#fi
 	# determine user's full name and email from git if possible
 	git config --global --get user.name 1>/dev/null && _notelosUSERFULLNAME=$(git config --global --get user.name)
 	git config --global --get user.email 1>/dev/null && _notelosUSEREMAIL=$(git config --global --get user.email)
@@ -340,17 +349,17 @@ _setEnv() {
 	declare -g _notelosUSEREMAIL
 	declare -g _notelosUSERFULLNAME
 	# print for debug
-	#_debug "$(declare -p _selfNAME)"
-	#_debug "$(declare -p _selfABSOLUTE)"
-	#_debug "$(declare -p _selfBASE)"
-	#_debug "$(declare -p _notelosNAME)"
-	#_debug "$(declare -p _notelosBASE)"
-	#_debug "$(declare -p _notelosHOME)"
-	#_debug "$(declare -p _notelosBIN)"
-	#_debug "$(declare -p _notelosLAB)"
-	#_debug "$(declare -p _notelosUSERNAME)"
-	#_debug "$(declare -p _notelosUSEREMAIL)"
-	#_debug "$(declare -p _notelosUSERFULLNAME)"
+	_debug "$(declare -p _selfNAME)"
+	_debug "$(declare -p _selfABSOLUTE)"
+	_debug "$(declare -p _selfBASE)"
+	_debug "$(declare -p _notelosNAME)"
+	_debug "$(declare -p _notelosBASE)"
+	_debug "$(declare -p _notelosHOME)"
+	_debug "$(declare -p _notelosBIN)"
+	_debug "$(declare -p _notelosLAB)"
+	_debug "$(declare -p _notelosUSERNAME)"
+	_debug "$(declare -p _notelosUSEREMAIL)"
+	_debug "$(declare -p _notelosUSERFULLNAME)"
 }
 
 _checkInstalled() {
@@ -432,13 +441,14 @@ _install() {
 		_isBaseValid "${_notelosBASE}" || { _error "'${_notelosBASE}' is not valid base path"; exit 1; }
 		declare -g _notelosBASE
 		declare -g _notelosHOME=${_notelosBASE}/${_notelosNAME}
+		declare -g _notelosBIN=${_notelosHOME}/.bin
 		#  lab location (ie git repo) can be modified during install
 		_ask "enter path for git source repo [$(_fmt path "${_notelosLAB}")] "
 		read _repo
 		[ -z "${_repo}" ] || declare -g _notelosLAB=${_repo}
 		[[ -e "${_notelosLAB}" ]] || { _error "'${_notelosLAB}' is not found"; exit 1; }
 		# set the user name for git
-		_ask "enter preferred name (for git commits) [$(_fmt path "${_notelosUSERNAME}")] "
+		_ask "enter preferred user name (for git commits) [$(_fmt path "${_notelosUSERNAME}")] "
 		read _username
 		[ -z "${_username}" ] || _notelosUSERNAME=${_username}
 		# set the git email
@@ -630,7 +640,8 @@ main() {
 	# setup the environment after processing all command line parameters
 	_setEnv
 	# check for sudo priveledges
-	_checkSudo || _warn "sudo priveledges will be required to run fully"
+	#_checkSudo || _warn "sudo priveledges will be required to run fully"
+	_checkSudo >/dev/null 2>&1 || _warn "sudo priveledges will be required to run fully"
 	# check for external requirements
 	_checkExternals
 	#_debug "full command is '${_selfNAME} ${_fullCommand}'"

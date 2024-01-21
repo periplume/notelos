@@ -10,25 +10,6 @@ set -o nounset
 set -o pipefail
 IFS=$'\n\t'
 
-# prevent this file from being sourced
-(return 0 2>/dev/null) && { echo "dsink cannot be sourced"; return; }
-
-#####################
-# ENVIRONMENT
-#####################
-# temp fix to allow for easier troubleshooting standalone...yes...it needs a
-# standalone mode!
-_notelosHOME=${notelosHOME:-$HOME/notelos}
-_NAME=.dsink
-# inherit the _notelosHOME as the BASE, otherwise use $HOME
-_BASE=${_notelosHOME:-$HOME}
-_HOME="${_BASE}/${_NAME}"
-_CONFIG="${_HOME}/dsink.conf"
-_LOGFILE="${_BASE}/.log/dsink.log"
-_CATALOG="${_HOME}/catalog"
-_MEDIA="${_CATALOG}/media"
-_MOUNT="${_HOME}/mount"
-
 ######################################
 # LIBRARY SOURCES
 ######################################
@@ -48,9 +29,18 @@ _requiredCommands=(rsync cryptsetup lsblk parted wipefs inotifywait)
 # LOGGING AND CONSOLE
 ###########################
 
+# default initial debugging and logging settings
+# note: command line parameters can modify these
+# script debug toggle (set to true to enable default global debugging)
+_DEBUG=false
+# silent mode for scripting (supresses all output)
+_SILENT=false
+# logging facility
+_LOG=false
+
+# instantiate the log/mesg functions with defaults (these will be re-initialized
+# after reading positional parameters)
 _fLOG
-# the log/console functions instantited now will be re-initialized after all the
-# command line parameters are processed (if run within notelos)
 
 ###########################
 # HELPER FUNCTIONS
@@ -179,8 +169,7 @@ _getOpts () {
 				while getopts ":m" flag; do
 					case ${flag} in
 						m)
-							_checkMount && _getMountedName || return 1
-							exit 0
+							_printName=true
 							;;
 						?)
 							_error "${FUNCNAME[0]}: unknown flag -$OPTARG"; exit 1
@@ -204,25 +193,89 @@ _getOpts () {
 ##################################
 
 _setEnv() {
-	# get the name and absolute path of the calling script
+  # get the name and absolute path of the calling script
   _selfNAME=$(basename "${BASH_SOURCE[0]}")
   _selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
   _selfBASE=$(dirname "${_selfABSOLUTE}")
   _selfCALL=${0}
   _selfPWD=$(pwd)
+	# determine mode (notelos-integrated or standalone)
+	[[ -n "${_notelosHOME+x}" && ${_MODE:-} != "standalone" ]] && _MODE=integrated || _MODE=standalone
+	# note: the -x switch overrides the global _notelosHOME var 
+	# set up the working environment
+	if [[ ${_MODE} = "integrated" ]]; then
+		# set up integrated mode (hidden within)
+		_MASTER="${_notelosNAME}"
+		_BASE="${_notelosHOME}"
+		_NAME="${_NAME:-${_selfNAME}}"
+		_HOME="${_BASE}/.${_NAME}"
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/.log/${_NAME}.log"
+		# inherit these (from notelos)
+		_DEBUG=${_notelosDEBUG}
+		_LOG=${_notelosLOG}
+		_SILENT=${_notelosSILENT}
+		_USERNAME=${_notelosUSERNAME}
+		_USERFULLNAME=${_notelosUSERFULLNAME}
+		_USEREMAIL=${_notelosUSEREMAIL}
+		_EDITOR=_notelosEdit
+	else
+		# set up standalone mode (not hidden)
+		_MASTER=self
+		_BASE="${_BASE:-$HOME}"
+		_NAME="${_NAME:-${_selfNAME}}"
+		_HOME=${_BASE}/${_NAME}
+		_GITDIR="${_HOME}/.git"
+		_LOGFILE="${_BASE}/${_NAME}.log"
+		# inherit these
+		_DEBUG=${_DEBUG:-false}
+		_LOG=${_LOG:-false}
+		_SILENT=${_SILENT:-false}
+		_USERNAME=$(whoami)
+		_USERFULLNAME="unknown"
+		_USEREMAIL="unknown"
+		_EDITOR=${EDITOR:-nano}
+	fi
+  [[ -f "${_LOGFILE:-}" ]] && _LOGGING=true || _LOGGING=false
+	_debug "$(declare -p _MODE)"
+	_debug "$(declare -p _MASTER)"
 	_debug "$(declare -p _NAME)"
 	_debug "$(declare -p _BASE)"
 	_debug "$(declare -p _HOME)"
-	_debug "$(declare -p _CONFIG)"
+	_debug "$(declare -p _USERNAME)"
+	_debug "$(declare -p _USERFULLNAME)"
+	_debug "$(declare -p _USEREMAIL)"
+	_debug "$(declare -p _GITDIR)"
 	_debug "$(declare -p _LOGFILE)"
-	_debug "$(declare -p _CATALOG)"
-	_debug "$(declare -p _MEDIA)"
-	_debug "$(declare -p _MOUNT)"
+	_debug "$(declare -p _DEBUG)"
+	_debug "$(declare -p _SILENT)"
+	_debug "$(declare -p _LOG)"
+	_debug "$(declare -p _LOGGING)"
+	export _MODE
+	export _MASTER
+	export _NAME
+	export _BASE
+	export _HOME
+	export _USERNAME
+	export _USERFULLNAME
+	export _USEREMAIL
+	export _GITDIR
+	export _LOGFILE
+	export _DEBUG
+	export _SILENT
+	export _LOG
+	export _LOGGING
+	# adding dsink specific VARS now
+	_CONFIG="${_HOME}/dsink.conf"
+	_CATALOG="${_HOME}/catalog"
+	_MEDIA="${_CATALOG}/media"
+	_MOUNT="${_HOME}/mount"
+	export _MOUNT
 }
 
 _checkHome () {
 	if [ -d "${_HOME}" ]; then
-		_info "'${_HOME}' found"
+		#_info "'${_HOME}' found"
 		[ -d "${_MOUNT}" ] || mkdir "${_MOUNT}"
 		[ -d "${_CATALOG}" ] || mkdir "${_CATALOG}"
 		[ -d "${_MEDIA}" ] || mkdir "${_MEDIA}"
@@ -258,6 +311,7 @@ _format() {
 	# catch premature exits
 	trap _irishExit SIGINT
 	_checkMount && { _error "device already mounted"; return 1; }
+	_checkCrypt && { _error "crypt device active"; return 1; }
 	_findNewDisk || { _error "no new disk found"; return; }
   _info "found ${_newDiskDevice}"
 	_printDiskInfo "${_newDiskDevice}"
@@ -313,6 +367,7 @@ _doMakeFS() {
 }
 
 _doEncrypt() {
+	set -x
 	# arg 1 = partition (eg /dev/sda1)
 	# encrypt the device with luks, then open the device
 	sudo cryptsetup luksFormat --verify-passphrase --batch-mode ${1} || \
@@ -333,6 +388,64 @@ _doWritePartition() {
 }
 
 _status() {
+	if [[ ${_printName} = "true" ]]; then
+	 	if _checkMount; then
+		 	_getMountedName
+			return 0
+		else
+			return 1
+		fi
+	fi
+	_debug "START HERE"
+	if _checkCrypt; then
+		_isCryptActive=true
+		_debug "${FUNCNAME[0]}: crypt active"
+	else
+		_isCryptActive=false
+		_debug "${FUNCNAME[0]}: no active crypt device"
+	fi
+	if [[ ${_isCryptActive} = "true" ]]; then
+		# there SHOULD be a mount
+		if _checkMount; then
+			_debug "${FUNCNAME[0]}: _checkmount returns true"
+			_getMountedName || { _warn "nothing mounted"; return 1; }
+			_isMounted=true
+			_info "mounted is true yes!"
+		else
+			_debug "${FUNCNAME[0]}: _checkmount returns false"
+			_warn "nothing mounted but it should be"
+			_isMounted=false
+		fi
+	else
+		# there better NOT be a mount
+		if _checkMount; then
+			_debug "${FUNCNAME[0]}: _checkmount returns true  very bad!"
+			_getMountedName || { _warn "nothing mounted"; return 1; }
+			_isMounted=true
+		else
+			_debug "${FUNCNAME[0]}: _checkmount returns false"
+			_info "nothing mounted, as expected"
+			_isMounted=false
+		fi
+	fi
+
+	# next check for dsink crypt device
+	# sudo cryptsetup status dssink
+  # /dev/mapper/dssink is inactive.
+  #	sudo cryptsetup status dsink
+  #/dev/mapper/dsink is active.
+   # type:    n/a
+    #cipher:  aes-xts-plain64
+   # keysize: 512 bits
+  #  key location: keyring
+  #  device:  (null)
+  #  sector size:  512
+   # offset:  32768 sectors
+   # size:    15626240 sectors
+   # mode:    read/write
+
+
+	return
 	_checkMount && _getMountedName || { _info "nothing mounted"; return; }
 }
 
@@ -572,7 +685,8 @@ _unmount() {
 	# must be interactive to allow sudo command
 	# check for mount first
 	_checkMount || { _error "no dsink device mounted"; return; }
-	_media=$(_getMountedName) && _info "found mounted device ${_media}"
+	_media=$(_getMountedName) && _info "found mounted device ${_media}" || \
+		{ _warn "no mounted device found"; return 1; }
 	sudo umount "${_MOUNT}" && rm "${_CATALOG}/media/${_media}/mounted" || { _error "unmount failure"; return; }
 	sudo cryptsetup luksClose dsink || _error "${FUNCNAME[0]}: luksClose failed with err $?"
 	_info "OK to remove usb device now"
@@ -581,27 +695,34 @@ _unmount() {
 _mount() {
 	# prompt use to insert dsink usb, open luks dsink, mount fs
 	# check for mount first
+	_debug "ATTEMPTING TO MOUNT"
 	_detectedDsinkDevice=
 	_checkMount && { _error "dsink device already mounted"; return 1; }
 	if [ -e /dev/disk/by-partlabel/dsink ]; then
 		_info "dsink partition detected"
 		_detectedDsinkDevice=$(readlink -f /dev/disk/by-partlabel/dsink)
+		_return=$?
+		_debug "got $_return with '${_detectedDsinkDevice}'"
 	else
-		echo "no dsink partition available"
+		_warn "no dsink partition available"
+		return
 	fi
 	if [ -n "${_detectedDsinkDevice}" ]; then
+		_debug "${FUNCNAME[0]}: found the device"
 		if [ ! -e /dev/mapper/dsink ]; then
-			sudo cryptsetup luksOpen ${_detectedDsinkDevice} dsink
+			_debug "${FUNCNAME[0]}: opening '${_detectedDsinkDevice}'"
+			sudo cryptsetup luksOpen ${_detectedDsinkDevice} dsink || \
+				{ _warn "${FUNCNAME[0]}: could not open the device"; return 1; }
 		fi
-		sudo mount /dev/mapper/dsink "${_MOUNT}"
+		sudo mount /dev/mapper/dsink "${_MOUNT}" || { _error "${FUNCNAME[0]}: could not mount"; return 1; }
 		sudo chown -R jason:jason "${_MOUNT}"
 		_deviceID=${_detectedDsinkDevice::-1}
 		_media=$(_getPTUUID ${_deviceID})
+		[[ -d "${_CATALOG}/media/${_media:0:3}" ]] || mkdir -p "${_CATALOG}/media/${_media:0:3}"
 		touch "${_CATALOG}/media/${_media:0:3}/mounted"
 	else
-		echo "insert a dsink device and try again"
+		_info "insert a dsink device and try again"
 	fi
-	# TODO this function needs reworking...
 }
 
 _checkMapperFile() {
@@ -617,13 +738,50 @@ _findUnmountedDsink() {
 	echo DO
 }
 
+_checkCrypt() {
+	# check for active crypt dsink device
+	# return 0 if true (active)
+	local _deviceName="dsink"
+	local _lsblkInfo
+	#if dmsetup status "${_deviceName}" &>/dev/null; then
+	#if ls /dev/mapper/dsink &>/dev/null; then
+	_lsblkInfo=$(lsblk -n /dev/mapper/${_deviceName} 2>/dev/null)
+	if [[ $? = 0 ]]; then
+		#_debug "${FUNCNAME[0]}: active crypt device '${_deviceName}'"
+		return 0
+	else
+		#_debug "${FUNCNAME[0]}: no active crypt device named '${_deviceName}'"
+		return 1
+	fi
+}
+
 _checkMount() {
 	# check for mounted dsink device
 	# return 0 for true, 1 for false
-	if grep -qs "${_MOUNT}" /proc/mounts; then
-		return 0
+	local _isCryptActive=true
+	#_debug "${FUNCNAME[0]}: checking for active crypt device"
+	_checkCrypt || { _isCryptActive=false; _warn "no active crypt device"; }
+	#_debug "${FUNCNAME[0]}: checking for existing mounts"
+	if [[ ${_isCryptActive} = "true" ]]; then
+		#TODO where does _MOUNT come from?
+		if grep -qs "${_MOUNT}" /proc/mounts; then
+			#_debug "${FUNCNAME[0]}: found device '${_MOUNT}' in /proc/mounts"
+			return 0
+		else
+			_warn "${FUNCNAME[0]}: crypt active but no mount!!!"
+			_debug "${FUNCNAME[0]}: no device '${_MOUNT}' in /proc/mounts"
+			return 1
+		fi
 	else
-		return 1
+		# there is no active crypt device...so should never have a mount
+		# but we shuld check, in case
+		if grep -qs "${_MOUNT}" /proc/mounts; then
+			_warn "${FUNCNAME[0]}: no active crypt device, but mount exists!!"
+			return 1
+		else
+			_warn "${FUNCNAME[0]}: no active crypt device, and no mount"
+			return 1
+		fi
 	fi
 }
 

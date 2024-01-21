@@ -38,7 +38,7 @@ _DEBUG=false
 # silent mode for scripting (supresses all output)
 _SILENT=false
 # logging facility
-_LOG=false
+_LOG=true
 
 # instantiate the log/mesg functions with defaults (these will be re-initialized
 # after reading positional parameters)
@@ -330,8 +330,9 @@ _create() {
 	mkdir "${_HOME}/transcripts"	# whisper output
 	mkdir "${_HOME}/proofs"				# human proofed...can push
 	mkdir "${_HOME}/audio"				# audio files corresponding to transcripts
-	mkdir "${_HOME}/import"				# where imports are processed
 	mkdir "${_HOME}/state"				# where state is maintained
+	mkdir "${_HOME}/log"					# where logs go
+	mkdir "${_HOME}/catalog"			# the master catalog of recordings
 	# ignore recordings and import
 	echo "mic/" > "${_HOME}/.gitignore"
 	echo "queue/" >> "${_HOME}/.gitignore"
@@ -375,24 +376,26 @@ _namePicker () {
 	}
 	_showHelp() {
 		printf '
-+------------------------------------------------+
-|  mnemon proofing    |  hit "/" to close help   |
-+---------------------+--------------------------+
+ +------------------------------------------------+
+ |  mnemon proofing    |  hit "/" to close help   |
+ +---------------------+--------------------------+
 
 you are viewing the whisper-produced transcripts
 
-for each transcript there are only 3 options
+ - ctrl-[up|down] arrow scrolls the preview window
+ - ctrl-j previews the json output (txt is default)
+ - ctrl-p plays the audio in the background
+ - ctrl-o stops the playing audio
 
-  1. delete    shift + "down arrow"
-  2. accept    shift + "up arrow"
-  3. edit      shift + "right"
+for each transcript there are only 3 actions
 
-ctrl-p plays the audio
+  1. delete    alt-d
+  2. accept    alt-a
+  3. edit      alt-e
 
-delete removes the transcript permanently
-accept moves it to the /proofs directory
-edit opens an editor, and if the saved version differs,
- the file is moves to /proofs
+delete removes the audio and transcript permanently
+accept moves it to the /proofs directory as is
+edit opens an editor and saves to proofs/ dir
 
 keep a clean work space'
 	}
@@ -402,6 +405,7 @@ keep a clean work space'
 		_newName=$(fzf \
 			--no-multi \
 			--no-mouse \
+			--disabled \
 			--ansi \
 			--print-query \
 			--exact \
@@ -411,17 +415,21 @@ keep a clean work space'
 			--bind="start:reload(${_input})" \
 			--bind="?:change-preview(_showHelp)" \
 			--bind="/:change-preview(${_preview} {q} {})" \
-			--bind="shift-up:transform-header(_transHeader 'accepted')+execute(mv ${_HOME}/transcripts/{} ${_HOME}/proofs/{})+reload(${_input})" \
-			--bind="shift-down:transform-header(_transHeader 'deleted')+execute(rm ${_HOME}/transcripts/{})+reload(${_input})" \
-			--bind="shift-right:become(_editProof {} </dev/tty >/dev/tty)" \
+			--bind="focus:transform-header(_transHeader 'ctrl-p: play')" \
+			--bind="alt-a:transform-header(_transHeader 'accepted')+execute(mv ${_HOME}/transcripts/{} ${_HOME}/proofs/{})+reload(${_input})" \
+			--bind="alt-d:transform-header(_transHeader 'deleted')+execute(_deleteEntry {})+reload(${_input})+reload(${_input})" \
+			--bind="alt-e:become(_editProof {} </dev/tty >/dev/tty)" \
 			--bind="ctrl-c:transform-header(_transHeader 'ESC to abort')" \
 			--bind="ctrl-q:transform-header(_transHeader 'ESC to abort')" \
-			--bind="ctrl-p:transform-header(_transHeader 'playing')+execute(_play {})" \
+			--bind="ctrl-p:transform-header(_transHeader 'ctrl-o: stop')+execute-silent(_play {}&)+refresh-preview" \
+			--bind="ctrl-o:transform-header(_transHeader 'stopped')+execute-silent(_stopPlayer)+refresh-preview" \
 			--bind="ctrl-z:transform-header(_transHeader 'no ctrl-z')" \
+			--bind="ctrl-j:transform-header(_transHeader 'ctrl-t txt')+change-preview(${_preview} {q} {} json)" \
+			--bind="ctrl-t:transform-header(_transHeader 'ctrl-p to play')+change-preview(${_preview} {q} {})" \
 			--bind="backward-eof:transform-header(_transHeader 'ESC to abort')" \
 			--bind="esc:abort" \
-			--preview="${_preview} {q} {}" \
-			--preview-window=75%,wrap
+			--preview="${_preview} {q} {} txt" \
+			--preview-window=80%,wrap,~5,border-double
 		);
 		query=$(echo "${_newName}" | head -n1)
 		selection=$(echo "${_newName}" | tail -n1)
@@ -432,43 +440,220 @@ keep a clean work space'
 	done
 }
 
+_getMediaFile() {
+	# print the media file name
+	# only looks in audio/ where media is placed after the transcript job completes
+	# $1 = key
+	if [ -f "${_HOME}/audio/${_key}.m4a" ]; then
+		_audio="${_HOME}/audio/${_key}.m4a"
+	elif [ -f "${_HOME}/audio/${_key}.mp3" ]; then
+		_audio="${_HOME}/audio/${_key}.mp3"
+	elif [ -f "${_HOME}/audio/${_key}.wav" ]; then
+		_audio="${_HOME}/audio/${_key}.wav"
+	else
+		# notice that _debug doesn't get color here in the preview window
+		# not exactly as designed
+		_debug "${FUNCNAME[0]}: unknown media type for '${_key}'"
+		[[ -d "${_HOME}/catalog/${_key}" ]] && _catalog=true
+		[[ -d "${_HOME}/transcriptions/${_key}" ]] && _transcrpt=true
+		# check for active transcription job with this key
+		# add key to transcription pipeline (like import)
+		return
+	fi
+	echo "$(basename ${_audio})"
+}
+export -f _getMediaFile
+
+_deleteEntry() {
+	local _key=$1
+	local _file=$(_getMediaFile ${_key})
+	rm "${_HOME}/audio/${_file}"
+	rm -rf "${_HOME}/transcripts/${_key}"
+	rm -rf "${_HOME}/catalog/${_key}"
+}
+export -f _deleteEntry
+
+_previewEntry() {
+	local _type=${3:-txt}
+	local _key=$2
+	local _file
+	local _duration
+	local _isPlaying
+	_file=$(_getMediaFile ${_key})
+	if [[ -z ${_file} ]]; then
+		# there is no found file in audio/ but it may be in queue
+	 	echo "nothing yet (probably transcribing now)"
+		[[ -e "${_HOME}/queue/${_key}.wav" ]] && echo "wav file is in the queue"
+		[[ -e "${_HOME}/queue/${_key}.m4a" ]] && echo "m4a file is in the queue"
+		return
+	fi
+	_duration=$(ffprobe -v error -sexagesimal -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${_HOME}/audio/${_file}")
+	# check if this key is playing or not
+	if [[ -d "${_HOME}/state/player/playing" ]]; then
+		_playingNow=$(basename "${_HOME}/state/player/playing"/*)
+		if [[ ${_playingNow} = "${_key}" ]]; then
+			# colorize _isPlaying to magenta blinking "playing"
+			_isPlaying=$'\x1b[38;5;5;5mplaying\x1b[0m'
+		fi
+	fi
+	printf '  +--%-31s----------+\n' "$(date -d @${_key})"
+	printf '  |  media:    %-23s%-7s |\n' "${_file}" "${_isPlaying}"
+	printf '  |  duration:  %-30s|\n' "${_duration}"
+	if [ ${_type} = "txt" ]; then
+		# reformat the txt into a single paragraph that fits the preview window
+		# figure out the preview window width, which is 80% cols
+		_termcols=$(tput cols)
+		_previewcols=$((_termcols * 85 / 100))
+		# highlight tags in green
+		_tag='\x1b[1;32m' ; _rst='\x1b[0m'
+		# display the proofed version if it exists
+		if [ -e "${_HOME}/proofs/${_key}.txt" ]; then
+			_proofed=true
+			local _path="${_HOME}/proofs/${_key}.txt"
+		else
+			_proofed=false
+			local _path="${_HOME}/transcripts/${_key}/${_key}.txt"
+		fi
+		[[ ${_proofed} = "true" ]] && _contentState=$'\033[38;5;2m proofed \033[0m' || _contentState=$'\x1b[38;5;3munproofed\x1b[0m' 
+		printf '  +---[ %-4s ]--[ %-10s ]-----------------+\n\n' "${3:-txt}" "${_contentState}"
+		cat "${_path}" | tr '\n' ' ' | fold -s -w ${_previewcols} | sed -E "s/#([[:alnum:]-]+)/${_tag}#\1${_rst}/g"
+	elif [ ${_type} = "json" ]; then
+		printf '  +------[ %-4s ]-----------------------------+\n\n' "${_type}"
+		cat "${_HOME}/transcripts/${2}/${2}.json" | jq -C
+	fi
+}
+export -f _previewEntry
+
+# extra controls for player
+# pause/unpause (send 'p' to /proc/PID/fd/0) or echo 'p' >&"${FFPLAY[0]}"
+# nope, need to open named pipes for this
+# stop (send 'q' to /proc/PID/fd/0) or echo 'q' >&"${FFPLAY[0]}"
+# slow/speed (these need to be preset VARS and included in the cli invocation of
+# the player)
+
+_stopPlayer() {
+	if [[ -e "${_HOME}/state/player/playing" ]]; then
+		# get the monitor pid and stop it
+		if [[ -e "${_HOME}/state/player/monitor" ]]; then
+			_monitor_pid=$(cat "${_HOME}/state/player/monitor")
+			kill "${_monitor_pid}"
+			rm "${_HOME}/state/player/monitor"
+		fi
+		# already playing, get pid and kill player and coproc
+		_playerPID=$(basename "${_HOME}/state/player/pid"/*)
+		_coprocPID=$(basename "${_HOME}/state/player/coproc"/*)
+		_debug "player pid is '${_playerPID}'"
+		_debug "coproc pid is '${_coprocPID}'"
+		kill ${_playerPID} 2>/dev/null
+		kill ${_coprocPID} 2>/dev/null
+		# reset player state
+		rm -rf "${_HOME}/state/player/pid"
+		rm -rf "${_HOME}/state/player/coproc"
+		rm -rf "${_HOME}/state/player/playing"
+	else
+		_debug "nothing to stop according to state"
+	fi
+}
+export -f _stopPlayer
+
 _play() {
-	_transcript=$1
-	_key=${_transcript%%.*}
-	_audio=${_HOME}/audio/${_key}.wav
-	nohup ffplay -autoexit -nodisp "${_audio}" &
+	_monitorPID() {
+		# wait for the pid to be gone, then clear up the state
+		local _pid=$1
+		while kill -0 "${_pid}" 2>/dev/null; do
+			# ffplayer pid is active
+			sleep 1
+		done
+		# ffplayer pid no longer active, clear state
+		rm -rf "${_HOME}/state/player/coproc"
+		rm -rf "${_HOME}/state/player/pid"
+		rm -rf "${_HOME}/state/player/playing"
+		# clean up after itself
+		rm "${_HOME}/state/player/monitor"
+	}
+	local _key=${1}
+	_debug "play called for '${1}'"
+	# make sure there is a state dir
+	[[ ! -d "${_HOME}/state/player" ]] && mkdir "${_HOME}/state/player"
+	# check if state indicates active player
+	if [[ -e "${_HOME}/state/player/playing" ]]; then
+		# get the monitor pid and stop it
+		if [[ -e "${_HOME}/state/player/monitor" ]]; then
+			_monitor_pid=$(cat "${_HOME}/state/player/monitor")
+			kill "${_monitor_pid}"
+			rm "${_HOME}/state/player/monitor"
+		fi
+		# already playing, get pid and kill player and coproc
+		_playerPID=$(basename "${_HOME}/state/player/pid"/*)
+		_coprocPID=$(basename "${_HOME}/state/player/coproc"/*)
+		_debug "player pid is '${_playerPID}'"
+		_debug "coproc pid is '${_coprocPID}'"
+		kill ${_playerPID} 2>/dev/null
+		kill ${_coprocPID} 2>/dev/null
+		# reset player state
+		rm -rf "${_HOME}/state/player/pid"
+		rm -rf "${_HOME}/state/player/coproc"
+		rm -rf "${_HOME}/state/player/playing"
+	else
+		_debug "no active player detected"
+	fi
+	# determine file type stupidly
+	if [ -f "${_HOME}/audio/${_key}.m4a" ]; then
+		_audio="${_HOME}/audio/${_key}.m4a"
+	elif [ -f "${_HOME}/audio/${_key}.mp3" ]; then
+		_audio="${_HOME}/audio/${_key}.mp3"
+	elif [ -f "${_HOME}/audio/${_key}.wav" ]; then
+		_audio="${_HOME}/audio/${_key}.wav"
+	else
+		_debug "${FUNCNAME[0]}: unknown media type for '${_key}'"
+		return
+	fi
+	_debug "got the file type '${_audio}'"
+	# run as coproc and set state
+	coproc FFPLAY { ffplay -autoexit \
+	 	-nodisp "${_audio}" \
+		>/dev/null 2>&1 &
+		_coproc_playerPID=$!;
+		mkdir -p "${_HOME}/state/player/playing/${_key}";
+		mkdir -p "${_HOME}/state/player/pid";
+		mkdir -p "${_HOME}/state/player/pid/${_coproc_playerPID}";
+		# notes, running ffplay with nohup would allow it to play beyond 
+	}
+	mkdir -p "${_HOME}/state/player/coproc";
+	mkdir -p "${_HOME}/state/player/coproc/${FFPLAY_PID}";
+	# wait for ffplay pid to show up
+	_debug "waiting on ffplay pid..."
+	while [[ ! -n $(find "${_HOME}/state/player/pid" -maxdepth 1 -type d -empty -print -quit) ]]; do
+		sleep 0.5
+	done
+	# get the pid
+	_monitor_pid=$(basename "${_HOME}/state/player/pid"/*)
+	_debug "got ffplay pid..."
+	_debug "start ffplay monitor..."
+	# run the pid monitor function in the background
+	_monitorPID "${_monitor_pid}" &
+	#TODO experiment with using nohup for this process...to clean up
+	# note the monitor job so we can stop it if _play is called again
+	echo $! > "${_HOME}/state/player/monitor"
+	_debug "_play function done."
 }
 export -f _play
 
 _editProof() {
-	# $1 is the file in /transcripts
-	# cp the file to proofs
-	# if changed...rm the file in /transcripts
-	set -x
-	local _path="${_HOME}/transcripts/${1}"
-	cp "${_path}" "${_HOME}/proofs/${1}"
-	vim "${_HOME}/proofs/${1}"
-	if diff -q "${_path}" "${_HOME}/proofs/${1}" 2>/dev/null; then
-		# files are identical...
-		rm "${_HOME}/proofs/${1}"
-	else
-		rm "${_path}"
-	fi
+	# $1 is the _key in transcripts/ and catalog/
+	local _path="${_HOME}/transcripts/${1}/${1}.txt"
+	# cp the file to proofs (formatted nicely)
+	cat "${_path}" | tr '\n' ' ' | fold -s -w 66 > "${_HOME}/proofs/${1}.txt"
+	vim "${_HOME}/proofs/${1}.txt"
+	#TODO now commit this
 }
 export -f _editProof
 
-_previewEntry() {
-	# used by fzf during edit to display the germ 
-	#echo "query    : $1"
-	#echo "selection: $2"
-	#echo "----entity contents below---------"
-	if [[ -z "${2}" ]]; then
-		echo "no such entity"
-	else
-		cat "${_HOME}/transcripts/${2}"
-	fi
-}
-export -f _previewEntry
+
+#TODO
+# disable screen locking during recording
+# gsettings get org.gnome.desktop.screensaver lock-enabled
+# i think it might be disrupting?
 
 # run the dictate window
 _shell() {
@@ -496,36 +681,253 @@ _shell() {
 		tput sgr0
 	}
 	_getKey() {
-		# don't give out the same key twice (need to enforce this here with a sleep)
-		date +%s
+		# generate unique unix-time key and record (mkdir) in catalog
+		local _key=$(date +%s)
+		# don't give out the same key twice
+		if [ -e "${_HOME}/catalog/${_key}" ]; then
+			sleep 1
+			# try again after a sleep (recursive)
+			_getKey
+		else
+			# enter key into catalog
+			mkdir "${_HOME}/catalog/${_key}"
+			# print the key
+			echo ${_key}
+		fi
 	}
-	_doRecord() {
-		# 
+	_catalogNew() {
+		# add $1 to catalog unless it exists, otherwise return 1
+		local _entry=$1
+		[[ -d "${_HOME}/catalog/${_entry}" ]] && { _warn "catalog entry '${_entry}' exists"; return 1; }
+		mkdir "${_HOME}/catalog/${_entry}"
+	}
+	_catalogAdd() {
+		local _key=$1
+		local _type=$2
+		local _value=${3:-}
+		[[ -d "${_HOME}/catalog/${_key}" ]] || { _warn "no such key '${_key}' in catalog"; return 1; }
+		echo "${_value}" > "${_HOME}/catalog/${_key}/${_type}"
+	}
+	_record() {
+		# do not record if recording is active
+		[[ -e "${_HOME}/state/mic/recording" ]] && { _warn "recording in progress"; return; }
+		# change mic state from idle to transitioning
+		[[ -d "${_HOME}/state/mic/idle" ]] && rmdir "${_HOME}/state/mic/idle"
+		mkdir -p "${_HOME}/state/mic/transitioning"
+		# set output format to wav (cpu vs space)
 		local oFmt="wav"
+		# get key and define file name
 		local _key=$(_getKey)
 		local _file="${_key}.${oFmt}"
-		[ ! -d "${_HOME}/log" ] && mkdir "${_HOME}/log"
-		[[ -e "${_HOME}/state/mic/recording" ]] && { _warn "recording in progress"; return; }
-		ffmpeg -loglevel warning -progress "${_HOME}/log/${_key}-ffmpeg.progress" -hide_banner -f alsa -i default -sample_rate 44100 \
-		 	"${_HOME}/mic/${_file}" 2>"${_HOME}/log/${_key}-ffmpeg.log" &
+		# start ffmpeg recording
+		ffmpeg -loglevel warning \
+			-progress "${_HOME}/log/${_key}-ffmpeg.progress" \
+			-hide_banner \
+			-f alsa \
+			-i default \
+			-sample_rate 44100 \
+			"${_HOME}/mic/${_file}" \
+		 	>"${_HOME}/log/${_key}-ffmpeg.log" 2>&1 &
+		# get the pid of the ffmpeg process (so we can signal it later)
 		_ffmpegPID=$!
-		mkdir -p "${_HOME}/state/mic/recording"
-		mkdir -p "${_HOME}/state/mic/pid/${_ffmpegPID}"
-		#[[ -e "${_HOME}/mic/${_file}" ]] && mv "${_HOME}/mic/${_file}" "${_HOME}/queue/${_file}"
+		# make sure this process is running
+		if [ -d "/proc/${_ffmpegPID}" ]; then
+			# system reports this is so, so change state
+			mv "${_HOME}/state/mic/transitioning" "${_HOME}/state/mic/recording" 
+			mkdir -p "${_HOME}/state/mic/pid/${_ffmpegPID}"
+			mkdir -p "${_HOME}/state/mic/file/${_file}"
+			mkdir -p "${_HOME}/state/mic/progressfile/${_key}-ffmpeg.progress"
+			mkdir -p "${_HOME}/state/mic/logfile/${_key}-ffmpeg.log"
+		else
+			# some problem with ffmpeg occurred...change state to unknown
+			mv "${_HOME}/state/mic/transitioning" "${_HOME}/state/mic/unknown"
+			_debug "ffmpeg process for ${_key} did not start successfully; pid=${_ffmpegPID}"
+		fi
 	}
-	_doTranscribe() {
-		local _file=$1
-		local model="medium.en"
-		local _queue="${_HOME}/queue"
-		local _path="${_queue}/${_file}"
-		# suppress_tokens expects a comma separated list of token ids
-		# eg 0=!  ,=11  .=13  ?=30
-		whisper "${_path}" --language en --verbose False --model medium.en --suppress_tokens '' \
-		 	-o "${_HOME}/transcripts/." -f txt 2>&1 >"${_HOME}/log/${_key}-whisper.log"
-		#rm "${_path}"
-		[ ! -d "${_HOME}/audio" ] && mkdir "${_HOME}/audio"
-		mv "${_path}" "${_HOME}/audio/${_file}"
-		}
+	_abort() {
+		# check for recording in progress
+		[[ -e "${_HOME}/state/mic/recording" ]] || { _warn "nothing to abort"; return; }
+		# check for the pid dir in which the pid is stored as a dir
+		[[ -e "${_HOME}/state/mic/pid" ]] || { _warn "no pid found; problem"; return; }
+		# get the ffmpeg pid and filename from state dir
+		ffmpegPID=$(basename "${_HOME}/state/mic/pid"/*)
+		ffmpegFILE=$(basename "${_HOME}/state/mic/file"/*)
+		# get the key
+		key=${ffmpegFILE%%.*}
+		# send INT signal to ffmpeg
+		kill -SIGINT ${ffmpegPID}
+		# remove pid info from state dir
+		rm -rf "${_HOME}/state/mic/pid/"
+		# change mic state
+		mv "${_HOME}/state/mic/recording" "${_HOME}/state/mic/idle"
+		# remove state file info
+		rm -rf "${_HOME}/state/mic/file"
+		# remove media file
+		rm "${_HOME}/mic/${ffmpegFILE}"
+		# remove logs
+		rm "${_HOME}/log/$(basename "${_HOME}/state/mic/logfile"/*)"
+		rm "${_HOME}/log/$(basename "${_HOME}/state/mic/progressfile"/*)"
+		# remove log pointers
+		rm -rf "${_HOME}/state/mic/progressfile"
+		rm -rf "${_HOME}/state/mic/logfile"
+		# update catalog
+		rmdir "${_HOME}/catalog/${key}"
+	}
+	_save() {
+		# check for recording in progress
+		[[ -e "${_HOME}/state/mic/recording" ]] || { _warn "not recording"; return; }
+		# check for the pid dir in which the pid is stored as a dir
+		[[ -e "${_HOME}/state/mic/pid" ]] || { _warn "no pid found; problem"; return; }
+		# get the ffmpeg pid and filename from state dir
+		ffmpegPID=$(basename "${_HOME}/state/mic/pid"/*)
+		ffmpegFILE=$(basename "${_HOME}/state/mic/file"/*)
+		# get the key
+		key=${ffmpegFILE%%.*}
+		# send INT signal to ffmpeg
+		kill -SIGINT ${ffmpegPID}
+		# remove pid info from state dir
+		rm -rf "${_HOME}/state/mic/pid/"
+		# change mic state
+		mv "${_HOME}/state/mic/recording" "${_HOME}/state/mic/idle"
+		# remove state file info
+		rm -rf "${_HOME}/state/mic/file"
+		# move media file to queue
+		mv "${_HOME}/mic/${ffmpegFILE}" "${_HOME}/queue/${ffmpegFILE}"
+		# remove logs
+		rm "${_HOME}/log/$(basename "${_HOME}/state/mic/logfile"/*)"
+		rm "${_HOME}/log/$(basename "${_HOME}/state/mic/progressfile"/*)"
+		# remove log pointers
+		rm -rf "${_HOME}/state/mic/progressfile"
+		rm -rf "${_HOME}/state/mic/logfile"
+	}
+	_browse() {
+		# browse the transcripts
+		# if there aren't any, don't bother
+		[[ $(ls -A ${_HOME}/transcripts/) ]] || { _warn "no transcripts available"; return; }
+		# call the picker function (fzf wrapper)
+		_namePicker _chosen "ls ${_HOME}/catalog" _previewEntry "transcripts" "? for help"
+	}
+	_import() {
+		# use _finder (from library) to identify directory with media files
+		# STRICT requirement...no sanity checks on file imports yet
+		# some sanity checking is in place, but not enough
+		_dir=$(_finder)
+		[[ -z "${_dir}" ]] && { _warn "fzf returned empty string from _finder"; return; }
+		# count files
+		_count=0
+		for file in "${_dir}"/*; do
+			if [ -f "${file}" ]; then
+				# ignore everything but mp3, m4a, wav
+				[[ ( "${file}" == *.mp3 || "${file}" == *.m4a || "${file}" == *.wav ) ]] || break
+				((_count++))
+			fi
+		done
+		[[ ${_count} = 0 ]] && { _warn "no valid media files found"; return; }
+		_goAhead=false
+		until $_goAhead; do
+			read -rsn1 -p $(_ask "import ${_count} files from '${_dir}'? [y/n/?] ") _yn
+			echo
+			[[ ${_yn} = "n" ]] && { _warn "import aborted"; return; }
+			[[ ${_yn} = "?" ]] && { _info "list of proposed import follows"; \
+				_filecount=0
+				printf "o=============================================================o\n"
+				printf "%-4s %-30s %-10s %-6s\n" "index" "name" "size" "duration"
+				printf "o-------------------------------------------------------------o\n"
+				for file in "${_dir}"/*; do
+					if [ -d "${file}" ]; then
+						#_warn "ignoring directory ${file}"
+						printf " %-4s %-30s %-10s\n" '-' "${file}" "ignoring nested directory"
+					elif [ -f "${file}" ]; then
+						# ignore everything but mp3, m4a, wav
+						[[ ( "${file}" == *.mp3 || "${file}" == *.m4a || "${file}" == *.wav ) ]] || break
+						((_filecount++))
+						_name=$(basename ${file})
+						_size=$(du -h "${file}" | awk '{print $1}')
+						_duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${file}")
+						if [[ ${_duration%%.*} -lt 60 ]]; then
+						 	_duration="${_duration%%.*} seconds"
+						else
+							seconds=${_duration%%.*}
+							minutes=$((seconds / 60))
+							remaining_seconds=$((seconds % 60))
+							_duration="${minutes}:${remaining_seconds}"
+						fi
+						printf " %-4s %-30s %-10s %-10s\n" ${_filecount} ${_name} ${_size} ${_duration}
+					else
+						_warn "'${file}' is neither file nor directory"
+					fi
+				done
+				printf "o=============================================================o\n"
+			}
+			[[ ${_yn} = "y" ]] && _goAhead=true
+		done
+		for _file in ${_dir}/*; do
+			# only process files
+			[[ -f "${_file}" ]] || continue
+			# ignore files that are not known media files (mp3,m4a,wav)
+			[[ ( "${_file}" == *.mp3 || "${_file}" == *.m4a || "${_file}" == *.wav ) ]] || _warn "$_file not allowed"
+			# get the unixtime from the "creation_time" 
+			c_time=$(ffprobe -v error -show_entries stream_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "${_file}")
+			c_unix=$(date -d "${c_time}" +%s)
+			suffix=${_file##*.}
+			# next check that there is no conflict in catalog/
+			# if so, increment _key by one and check again, until a unique key is
+			# obtained
+			# once the unique key is found
+			# mkdir in catalog with the key
+			_getKeyImport() {
+				# custom _getkey function exclusive to _import
+				# pass desired key as $1
+				# prints that key (if no conflict)
+				# otherwise prints the next free key in time
+				# generate unique unix-time key and record (mkdir) in catalog
+				local _key=$1
+				# don't give out the same key twice
+				if [ -e "${_HOME}/catalog/${_key}" ]; then
+					# increment and try again
+					((_key++))
+					# try again after a sleep (recursive)
+					_debug "_getKeyImport is gone recursive"
+					_getKeyImport ${_key}
+				else
+					## enter key into catalog
+					#mkdir "${_HOME}/catalog/${_key}"
+					# print the key
+					echo ${_key}
+				fi
+			}
+			_key=$(_getKeyImport ${c_unix})
+			# update the catalog with metadata and add the file to the queue
+			if [[ ${_key} = ${c_unix} ]]; then
+			 	_debug "got new matching key '${_key}' from '${c_unix}'"
+				_debug "adding new key '${_key}' to catalog"
+				_catalogNew "${_key}"
+				_catalogAdd "${_key}" "import"
+				_catalogAdd "${_key}" "original_name" "$(basename ${_file})" || { _error "great failure"; return 1; }
+				_catalogAdd "${_key}" "audio_file" "${_key}.${suffix}"
+				# extract metadata from each media file into catalog
+				ffprobe -v error -print_format flat -show_format -show_streams "${_file}" > "${_HOME}/catalog/${_key}/file_metadata.txt"
+				cp "${_file}" "${_HOME}/queue/${_key}.${suffix}"
+			else
+				_warn "'${c_unix}' conflict, got incremented '${_key}'"
+				_import_filename=$(basename "${_file}")
+				_catalog_filename=$(cat "${_HOME}/catalog/${c_unix}/original_name" || echo "")
+				if [[ ${_import_filename} = ${_catalog_filename} ]]; then
+					_warn "duplicate file detected...ignoring"
+				else
+					# the above isn't very robust, but import the file anyway
+					_catalogNew "${_key}"
+					_catalogAdd "${_key}" "import"
+					_catalogAdd "${_key}" "original_name" "$(basename ${_file})" || { _error "great failure"; return 1; }
+					_catalogAdd "${_key}" "audio_file" "${_key}.${suffix}"
+					# extract metadata from each media file into catalog
+					ffprobe -v error -print_format flat -show_format -show_streams "${_file}" > "${_HOME}/catalog/${_key}/file_metadata.txt"
+					cp "${_file}" "${_HOME}/queue/${_key}.${suffix}"
+				fi
+			fi
+		done
+	}
+
 	_showFileSize() {
 			ffmpegFILE=$(basename "${_HOME}/state/mic/file"/*)
 			if [[ -e "${_HOME}/mic/${ffmpegFILE}" ]]; then
@@ -543,24 +945,41 @@ _shell() {
 			fi
 	}
 	_checkQueue() {
-		[[ -e "${_HOME}/state/whisper/transcribing" ]] && return || true
+		[[ -e "${_HOME}/state/whisper/transcribing" ]] && return
 		# if file exists in queue, process it
 		if [ -n "$(ls ${_HOME}/queue 2>/dev/null)" ]; then
 			mkdir -p "${_HOME}/state/whisper/transcribing"
 			# get the oldest file
-			_file=$(ls ${_HOME}/queue/ | head -1)
+			_file=$(ls "${_HOME}/queue/" | head -1)
+			# set its full path
 			_path="${_HOME}/queue/${_file}"
+			# get the key
+			_key=${_file%%.*}
 			# run whisper as a coprocess
-			coproc WHISPER { whisper "${_path}" --language en --verbose False --model medium.en \
+			# suppress_tokens expects a comma separated list of token ids
+			# eg 0=!  ,=11  .=13  ?=30
+			coproc WHISPER { whisper "${_path}" \
+				--verbose False \
+				--task transcribe \
+				--language en \
+				--model medium.en \
 				--suppress_tokens '' \
-				-o "${_HOME}/transcripts/." \
-				-f txt  2>&1 >"${_HOME}/log/whisper.log" || mkdir "${_HOME}/state/whisper/failed";
+				--output_dir "${_HOME}/transcripts/${_key}/." \
+				--output_format all \
+				--word_timestamps True \
+				--max_line_width 60 \
+				> "${_HOME}/log/whisper.log" 2>&1 || mkdir "${_HOME}/state/whisper/failed";
 				mv "${_path}" "${_HOME}/audio/${_file}";
 				rmdir "${_HOME}/state/whisper/transcribing";
-		 		rm -rf "${_HOME}/state/whisper/coproc";	}
-				mkdir -p "${_HOME}/state/whisper/coproc/${WHISPER_PID}"
+		 		rm -rf "${_HOME}/state/whisper/coproc";	
+				# make recursive to empty the queue (but serially)
+				_checkQueue
+			}
+			# note the coprocess pid in state
+			mkdir -p "${_HOME}/state/whisper/coproc/${WHISPER_PID}"
 		else
-			_debug "no files in queue"
+			#_debug "no files in queue"
+			true
 		fi
 	}
 	_getState() {
@@ -571,7 +990,7 @@ _shell() {
 			_recordingState="idle"
 			_recording_ffmpegPID=''
 		else
-			_recordingState="unknown"
+			_recordingState="idle"
 			_recording_ffmpegPID=''
 		fi
 		if [[ -e "${_HOME}/state/whisper/transcribing" ]]; then
@@ -606,7 +1025,7 @@ _shell() {
 		printf '
  r) record                          [begins recording from mic]
  a) abort recording                 [deletes current recording]
- s) stop and save                   [saves current recording]
+ s) stop and transcribe             [saves current recording and begins transcription]
  b) browse transcriptions           [browse transcripts for proofing]
  m) move proofs                     [not implemented...push to?]
  i) import audio files              [import audio files]
@@ -635,85 +1054,29 @@ _shell() {
 				_inspect || :
 				;;
 			r)
-				[[ -e "${_HOME}/state/mic/recording" ]] && { _warn "recording in progress"; continue; }
-				[[ -d "${_HOME}/state/mic/idle" ]] && rmdir "${_HOME}/state/mic/idle"
-				mkdir -p "${_HOME}/state/mic/recording"
-				local oFmt="wav"
-				local _key=$(_getKey)
-				local _file="${_key}.${oFmt}"
-				[ ! -d "${_HOME}/log" ] && mkdir "${_HOME}/log"
-				ffmpeg -loglevel warning -progress "${_HOME}/log/${_key}-ffmpeg.progress" \
-					-hide_banner -f alsa -i default -sample_rate 44100 \
-					"${_HOME}/mic/${_file}" 2>"${_HOME}/log/${_key}-ffmpeg.log" &
-				_ffmpegPID=$!
-				mkdir -p "${_HOME}/state/mic/recording"
-				mkdir -p "${_HOME}/state/mic/pid/${_ffmpegPID}"
-				mkdir -p "${_HOME}/state/mic/file/${_file}"
-				mkdir -p "${_HOME}/state/mic/progressfile/${_key}-ffmpeg.progress"
-				mkdir -p "${_HOME}/state/mic/logfile/${_key}-ffmpeg.log"
+				_record || :
 				;;
 			a)
-				# check for recording in progress
-				[[ -e "${_HOME}/state/mic/recording" ]] || { _warn "nothing to abort"; continue; }
-				# check for the pid dir in which the pid is stored as a dir
-				[[ -e "${_HOME}/state/mic/pid" ]] || { _warn "no pid found; problem"; continue; }
-				# get the ffmpeg pid and filename from state dir
-				ffmpegPID=$(basename "${_HOME}/state/mic/pid"/*)
-				ffmpegFILE=$(basename "${_HOME}/state/mic/file"/*)
-				# send INT signal to ffmpeg
-				kill -SIGINT ${ffmpegPID}
-				# remove pid info from state dir
-				rm -rf "${_HOME}/state/mic/pid/"
-				# change mic state  (could do this with mv)
-				rmdir "${_HOME}/state/mic/recording"
-				mkdir "${_HOME}/state/mic/idle"
-				# remove state file info
-				rm -rf "${_HOME}/state/mic/file"
-				# remove media file
-				rm "${_HOME}/mic/${ffmpegFILE}"
-				# remove log pointers
-				rm -rf "${_HOME}/state/mic/progressfile"
-				rm -rf "${_HOME}/state/mic/logfile"
+				_abort || :
 				;;
 			s)
-				# check for recording in progress
-				[[ -e "${_HOME}/state/mic/recording" ]] || { _warn "not recording"; continue; }
-				# check for the pid dir in which the pid is stored as a dir
-				[[ -e "${_HOME}/state/mic/pid" ]] || { _warn "no pid found; problem"; continue; }
-				# get the ffmpeg pid and filename from state dir
-				ffmpegPID=$(basename "${_HOME}/state/mic/pid"/*)
-				ffmpegFILE=$(basename "${_HOME}/state/mic/file"/*)
-				# send INT signal to ffmpeg
-				kill -SIGINT ${ffmpegPID}
-				# remove pid info from state dir
-				rm -rf "${_HOME}/state/mic/pid/"
-				# change mic state  (could do this with mv)
-				rmdir "${_HOME}/state/mic/recording"
-				mkdir "${_HOME}/state/mic/idle"
-				# remove state file info
-				rm -rf "${_HOME}/state/mic/file"
-				# move media file too queue
-				mv "${_HOME}/mic/${ffmpegFILE}" "${_HOME}/queue/${ffmpegFILE}"
-				# remove log pointers
-				rm -rf "${_HOME}/state/mic/progressfile"
-				rm -rf "${_HOME}/state/mic/logfile"
+				_save || :
 				;;
 			b)
-				# browse the transcripts
-				[[ $(ls -A ${_HOME}/transcripts/) ]] || { _warn "no transcripts available"; continue; }
-				_namePicker _chosen "ls ${_HOME}/transcripts" _previewEntry "transcripts" "? for help" || :
+				_browse || :
 				;;
 			i)
 				# import
-				[ ! -d "${_HOME}/import" ] && mkdir "${_HOME}/import"
-				_dir=$(_finder)
-				for _file in ${_dir}/*; do
-					# get the unixtime
-					c_time=$(ffprobe -v error -show_entries stream_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "${_file}")
-					c_unix=$(date -d "${c_time}" +%s)
-					suffix=${_file##*.}
-					cp "${_file}" "${_HOME}/queue/${c_unix}.${suffix}"
-				done
+				_import || :
+
+				#_dir=$(_finder)
+				#for _file in ${_dir}/*; do
+				#	# get the unixtime
+				#	c_time=$(ffprobe -v error -show_entries stream_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "${_file}")
+				#	c_unix=$(date -d "${c_time}" +%s)
+				#	suffix=${_file##*.}
+				#	cp "${_file}" "${_HOME}/queue/${c_unix}.${suffix}"
+				#done
 				;;
 			I)
 				# first draft import
@@ -811,6 +1174,36 @@ _shell() {
 	done
 }
 
+	#_doRecord() {
+	#	local oFmt="wav"
+	#	local _key=$(_getKey)
+	#	local _file="${_key}.${oFmt}"
+	#	[[ -e "${_HOME}/state/mic/recording" ]] && { _warn "recording in progress"; return; }
+	#	ffmpeg -loglevel warning \
+	#		-progress "${_HOME}/log/${_key}-ffmpeg.progress" \
+	#		-hide_banner \
+	#		-f alsa \
+	#	 	-i default \
+	#	 	-sample_rate 44100 \
+	#	 	"${_HOME}/mic/${_file}" \
+	#		>"${_HOME}/log/${_key}-ffmpeg.log" 2>&1 &
+	#	_ffmpegPID=$!
+	#	mkdir -p "${_HOME}/state/mic/recording"
+	#	mkdir -p "${_HOME}/state/mic/pid/${_ffmpegPID}"
+	#}
+	#_doTranscribe() {
+	#	local _file=$1
+	#	local model="medium.en"
+	#	local _queue="${_HOME}/queue"
+	#	local _path="${_queue}/${_file}"
+	#	# suppress_tokens expects a comma separated list of token ids
+	#	# eg 0=!  ,=11  .=13  ?=30
+	#	whisper "${_path}" --language en --verbose False --model medium.en --suppress_tokens '' \
+	#	 	-o "${_HOME}/transcripts/." -f txt 2>&1 >"${_HOME}/log/${_key}-whisper.log"
+	#	#rm "${_path}"
+	#	[ ! -d "${_HOME}/audio" ] && mkdir "${_HOME}/audio"
+	#	mv "${_path}" "${_HOME}/audio/${_file}"
+	#	}
 main() {
 	# read all the positional parameters
   _getOpts "${@}"
