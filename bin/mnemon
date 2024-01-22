@@ -416,8 +416,8 @@ keep a clean work space'
 			--bind="?:change-preview(_showHelp)" \
 			--bind="/:change-preview(${_preview} {q} {})" \
 			--bind="focus:transform-header(_transHeader 'ctrl-p: play')" \
-			--bind="alt-a:transform-header(_transHeader 'accepted')+execute(mv ${_HOME}/transcripts/{} ${_HOME}/proofs/{})+reload(${_input})" \
-			--bind="alt-d:transform-header(_transHeader 'deleted')+execute(_deleteEntry {})+reload(${_input})+reload(${_input})" \
+			--bind="alt-a:transform-header(_transHeader 'accepted')+execute(_approveProof {})+reload(${_input})" \
+			--bind="alt-d:transform-header(_transHeader 'deleted')+execute(_deleteEntry {})+reload(${_input})" \
 			--bind="alt-e:become(_editProof {} </dev/tty >/dev/tty)" \
 			--bind="ctrl-c:transform-header(_transHeader 'ESC to abort')" \
 			--bind="ctrl-q:transform-header(_transHeader 'ESC to abort')" \
@@ -431,6 +431,7 @@ keep a clean work space'
 			--preview="${_preview} {q} {} txt" \
 			--preview-window=80%,wrap,~5,border-double
 		);
+			#--bind="alt-a:transform-header(_transHeader 'accepted')+execute(mv ${_HOME}/transcripts/{} ${_HOME}/proofs/{})+reload(${_input})" \
 		query=$(echo "${_newName}" | head -n1)
 		selection=$(echo "${_newName}" | tail -n1)
 		#_debug "query is '${query}'"
@@ -524,7 +525,8 @@ _previewEntry() {
 }
 export -f _previewEntry
 
-# extra controls for player
+#TODO set up named pipe for ffplay
+# then we can send it commands like pause, forward, etc
 # pause/unpause (send 'p' to /proc/PID/fd/0) or echo 'p' >&"${FFPLAY[0]}"
 # nope, need to open named pipes for this
 # stop (send 'q' to /proc/PID/fd/0) or echo 'q' >&"${FFPLAY[0]}"
@@ -642,18 +644,25 @@ export -f _play
 _editProof() {
 	# $1 is the _key in transcripts/ and catalog/
 	local _path="${_HOME}/transcripts/${1}/${1}.txt"
+	[[ -e "${_HOME}/proofs/${1}.txt" ]] && { _warn "proof already exists"; return; }
 	# cp the file to proofs (formatted nicely)
 	cat "${_path}" | tr '\n' ' ' | fold -s -w 66 > "${_HOME}/proofs/${1}.txt"
 	vim "${_HOME}/proofs/${1}.txt"
-	#TODO now commit this
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/proofs/${1}.txt"
+  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[edit] proof of ${1} saved"
 }
 export -f _editProof
 
-
-#TODO
-# disable screen locking during recording
-# gsettings get org.gnome.desktop.screensaver lock-enabled
-# i think it might be disrupting?
+_approveProof() {
+	# $1 is the key
+	local _path="${_HOME}/transcripts/${1}/${1}.txt"
+	[[ -e "${_HOME}/proofs/${1}.txt" ]] && { _warn "proof already exists"; return; }
+	# cp the file to proofs (formatted nicely)
+	cat "${_path}" | tr '\n' ' ' | fold -s -w 66 > "${_HOME}/proofs/${1}.txt"
+  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/proofs/${1}.txt"
+  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[approve] proof of ${1} saved"
+}
+export -f _approveProof
 
 # run the dictate window
 _shell() {
@@ -668,8 +677,9 @@ _shell() {
 	local _recording_pid=""
 	local _transcriptionState="waiting"
 	local _transcription_pid=""
-	# states: waiting, recording, paused
+	# colorize states: waiting, recording, paused
 	_cStat() {
+		# TODO remove tput usage here
 		[[ "${1}" =~ ^(recording) ]] && { tput blink; tput setaf 7; tput setab 1; }
 		[[ "${1}" =~ ^(waiting) ]] && tput setaf 3
 		[[ "${1}" =~ ^(idle) ]] && tput setaf 3
@@ -809,8 +819,6 @@ _shell() {
 	}
 	_import() {
 		# use _finder (from library) to identify directory with media files
-		# STRICT requirement...no sanity checks on file imports yet
-		# some sanity checking is in place, but not enough
 		_dir=$(_finder)
 		[[ -z "${_dir}" ]] && { _warn "fzf returned empty string from _finder"; return; }
 		# count files
@@ -870,28 +878,20 @@ _shell() {
 			c_time=$(ffprobe -v error -show_entries stream_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "${_file}")
 			c_unix=$(date -d "${c_time}" +%s)
 			suffix=${_file##*.}
-			# next check that there is no conflict in catalog/
-			# if so, increment _key by one and check again, until a unique key is
-			# obtained
-			# once the unique key is found
-			# mkdir in catalog with the key
+			# get a key and enter into catalog
 			_getKeyImport() {
 				# custom _getkey function exclusive to _import
 				# pass desired key as $1
 				# prints that key (if no conflict)
 				# otherwise prints the next free key in time
-				# generate unique unix-time key and record (mkdir) in catalog
 				local _key=$1
 				# don't give out the same key twice
 				if [ -e "${_HOME}/catalog/${_key}" ]; then
 					# increment and try again
 					((_key++))
 					# try again after a sleep (recursive)
-					_debug "_getKeyImport is gone recursive"
 					_getKeyImport ${_key}
 				else
-					## enter key into catalog
-					#mkdir "${_HOME}/catalog/${_key}"
 					# print the key
 					echo ${_key}
 				fi
@@ -958,6 +958,8 @@ _shell() {
 			# run whisper as a coprocess
 			# suppress_tokens expects a comma separated list of token ids
 			# eg 0=!  ,=11  .=13  ?=30
+			# the default is -1, setting this to '' or 0 seems to work best with
+			# punctuation and catching the "hash Oh See dash put" to render #OC-put
 			coproc WHISPER { whisper "${_path}" \
 				--verbose False \
 				--task transcribe \
@@ -972,7 +974,7 @@ _shell() {
 				mv "${_path}" "${_HOME}/audio/${_file}";
 				rmdir "${_HOME}/state/whisper/transcribing";
 		 		rm -rf "${_HOME}/state/whisper/coproc";	
-				# make recursive to empty the queue (but serially)
+				# make recursive to empty the queue (serially)
 				_checkQueue
 			}
 			# note the coprocess pid in state
@@ -1012,12 +1014,12 @@ _shell() {
 		transpid=${_transcribing_coprocPID:-none}
 		whisppid=${_transcribing_whisperPID:-none}
 		space=$(du -sh "${_HOME}" | awk '{print $1}')
-		#clear
+		clear
 		printf "=====\033[1mDICTATE MACHINE\033[0m--------Μνήμων--(%s)-------pid:%10d==============o\n" $_NAME $$
 		printf "\n"
 		printf " %-10s %-20s %30s %s\n" "mic state:" $micstate "whisper state:" $whispstate
 		printf "  %-10s %-20s %17s %s\n" "ffmpeg pid:" $ffmpegpid "coproc pid:" $transpid 
-		printf "  %-10s %-20s %17s %s \n" "media:" $(_showFileName) "whisper pid:" $whisppid
+		printf "  %-10s %-20s %17s %s \n" "media:" $(_showFileName)
 		printf "  size: %s\n" $(_showFileSize) 
 		printf "\no==============================================================================o\n"
 		printf "  %s(%s)     queue: %s     transcripts: %s    proofed: %s\n" $audnum $space $quenum $transnum $proofnum
@@ -1032,18 +1034,11 @@ _shell() {
  q) quit
 
   token words recognized: quote, unquote, hash, underscore, dash
-	metadata commands, eg, "hash g dash 1" => #g-1
-	                   eg, "hash oc dash put" => #oc-put
+	metadata commands, eg, "hash g dash 1"     =>  #g-1
+	                   eg, "hash oc dash put"  =>  #oc-put
 
 '
-
 	}
-
-	# trying to open a monitor to the recording and view ffmpeg stats ?
-  #looksee: '$(cat <&"${RECORDING[0]}" | grep ^total_size*)'
-  #looksee: '$(read -r output <&"${RECORDING[0]}"; echo $output | grep ^total_size*)'
-	#look: $(_watchCOPROC <&$"${RECORDING[0]}")
-
 	# main loop for menu screen
 	_getState
 	_printScreen
@@ -1054,117 +1049,47 @@ _shell() {
 				_inspect || :
 				;;
 			r)
+				# disable screen locking during recording and keep the screen from going
+				# blank from inactivity
+				_idledelay=$(gsettings get org.gnome.desktop.session idle-delay | cut -d' ' -f2)
+				_lockenabled=$(gsettings get org.gnome.desktop.screensaver lock-enabled)
+				gsettings set org.gnome.desktop.screensaver lock-enabled false
+				gsettings set org.gnome.desktop.session idle-delay 0
 				_record || :
 				;;
 			a)
+				# restore desktop locking and screen blanking
+				gsettings set org.gnome.desktop.screensaver lock-enabled ${_lockenabled:-false}
+				gsettings set org.gnome.desktop.session idle-delay ${_idledelay:-600}
 				_abort || :
 				;;
 			s)
+				# restore desktop locking and screen blanking
+				gsettings set org.gnome.desktop.screensaver lock-enabled ${_lockenabled:-false}
+				gsettings set org.gnome.desktop.session idle-delay ${_idledelay:-600}
 				_save || :
 				;;
 			b)
 				_browse || :
 				;;
 			i)
-				# import
 				_import || :
-
-				#_dir=$(_finder)
-				#for _file in ${_dir}/*; do
-				#	# get the unixtime
-				#	c_time=$(ffprobe -v error -show_entries stream_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "${_file}")
-				#	c_unix=$(date -d "${c_time}" +%s)
-				#	suffix=${_file##*.}
-				#	cp "${_file}" "${_HOME}/queue/${c_unix}.${suffix}"
-				#done
 				;;
-			I)
-				# first draft import
-				[[ ${_recordingState:-} != "waiting" ]] && continue
-				[[ ${_transcribingState:-} = "transcribing" ]] && continue
-				#local _keepAudioFiles=false
-				[ ! -d "${_HOME}/import" ] && mkdir "${_HOME}/import"
-				echo "importing" > ${_HOME}/import/.state
-				_dir=$(_finder)
-				_debug "import files from ${_dir}"
-				_fileList=()
-				for _file in ${_dir}/*.m4a; do
-					_fileList+=("${_file}")
-				done
-				_debug "$(declare -p _fileList)"
-				_debug "found ${#_fileList[@]} files"
-				_ask "enter name for import job "
-				read _importName
-				[ -z "${_importName}" ] && { _warn "import aborted; name needed"; rm ${_HOME}/import/.state; continue; }
-				[ -d "${_HOME}/import/${_importName}" ] && { _warn "name conflict"; rm ${_HOME}/import/.state; continue; }
-				mkdir -p "${_HOME}/import/${_importName}"
-				# extract creation_time and copy as <unixtime.filetype> into import dir
-				for _importFile in ${_fileList[@]}; do
-					file_type=${_importFile##*.}
-					c_time=$(ffprobe -v error -show_entries stream_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "${_importFile}")
-					c_unix=$(date -d "${c_time}" +%s)
-					duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${_importFile}")
-					echo "${_importFile} ${c_unix}" "${duration}" "${file_type}"
-					cp "${_importFile}" "${_HOME}/import/${_importName}/${c_unix}.${file_type}"
-				done
-				# extract metadata from each media file
-				for importedFile in "${_HOME}/import/${_importName}"/*; do
-					ffprobe -v error -print_format flat -show_format -show_streams "${importedFile}" > "${importedFile}_metadata.txt"
-				done
-				# build the list for whisper cli
-				_whisperList=()
-				for _f in ${_HOME}/import/${_importName}/*.${file_type}; do
-					_whisperList+=("${_f}")
-				done
-				# begin the whisper job
-				coproc WHISPER { whisper --language en --verbose False --model medium.en --suppress_tokens '' \
-					-o "${_HOME}/transcripts/." -f txt ${_whisperList[@]} 2>&1 >/dev/null; \
-					rm ${_HOME}/import/.state; rm ${_HOME}/import/.transcribing_*; }
-				_debug "whisper: _coproc_pid=${WHISPER_PID}"
-				_debug "WHISPER stdout is ${WHISPER[0]}"
-				_debug "WHISPER stdin is ${WHISPER[1]}"
-				echo ${WHISPER_PID} > "${_HOME}/import/.transcribing_coprocPID"
-				echo ${WHISPER[0]} > "${_HOME}/import/.transcribing_coprocSTDOUT"
-				echo ${WHISPER[1]} > "${_HOME}/import/.transcribing_coprocSTDIN"
-				_transcription_pid=$(ps --no-headers -o pid --ppid ${WHISPER_PID})
-				_transcription_pid=$(_trimString ${_transcription_pid})
-				echo ${_transcription_pid} > "${_HOME}/import/.transcribing_whisperPID"
-				#whisper --language en --verbose False --model medium.en --suppress_tokens '' \
-				#	-o "${_HOME}/transcripts/." -f txt ${_whisperList[@]} 2>&1 >/dev/null
-				;;
-				# import workflow
-				# OPTIONS...keep audio file (vs discard)
-				# use finder to locate a directory with audio files ready to import
-				# count, itemize, measure each one
-				# create state files with this catalog info
-				# - file path
-				# - file type
-				# - file size
-				# - file order
-				# check with user the data and order is correct (maybe not)
-				# ask user for import name (like source in germ)
-				# create mktemp /tmp/dir workspace
-				# for each file
-				# get a unique <unixtime> key
-				# copy file to /tmp/ as <unixtime>.<filetype>
-				# extract the file metadata
-				# ffprobe -print_format json -show_format -show_streams -hide_banner -i 1.m4a
-				# save it as /import/<file>
-				# NOTE: audio file metadata from iphone includes:
-				# - creation_time
-				# - duration
-				# - title (user can change file name in iphone)
-				# - filename
-				# - encoder (includes iphone's name)
-				# 
 			q)
 				if [[ ${_recordingState} = "recording" ]]; then
 					_warn "recording live now"
 					read -rsn1 -p "$(_ask 'really quit now? [yn] ')" _yn
 					echo
-					[[ ${_yn} = "y" ]] && return || continue
+					if [[ ${_yn} = "y" ]]; then
+						# restore desktop locking and screen blanking
+						gsettings set org.gnome.desktop.screensaver lock-enabled ${_lockenabled:-false}
+						gsettings set org.gnome.desktop.session idle-delay ${_idledelay:-600}
+					 	return
+					else
+						continue
+					fi
 				else
-					return 0
+					return
 				fi
 				;;
 		esac
@@ -1174,36 +1099,6 @@ _shell() {
 	done
 }
 
-	#_doRecord() {
-	#	local oFmt="wav"
-	#	local _key=$(_getKey)
-	#	local _file="${_key}.${oFmt}"
-	#	[[ -e "${_HOME}/state/mic/recording" ]] && { _warn "recording in progress"; return; }
-	#	ffmpeg -loglevel warning \
-	#		-progress "${_HOME}/log/${_key}-ffmpeg.progress" \
-	#		-hide_banner \
-	#		-f alsa \
-	#	 	-i default \
-	#	 	-sample_rate 44100 \
-	#	 	"${_HOME}/mic/${_file}" \
-	#		>"${_HOME}/log/${_key}-ffmpeg.log" 2>&1 &
-	#	_ffmpegPID=$!
-	#	mkdir -p "${_HOME}/state/mic/recording"
-	#	mkdir -p "${_HOME}/state/mic/pid/${_ffmpegPID}"
-	#}
-	#_doTranscribe() {
-	#	local _file=$1
-	#	local model="medium.en"
-	#	local _queue="${_HOME}/queue"
-	#	local _path="${_queue}/${_file}"
-	#	# suppress_tokens expects a comma separated list of token ids
-	#	# eg 0=!  ,=11  .=13  ?=30
-	#	whisper "${_path}" --language en --verbose False --model medium.en --suppress_tokens '' \
-	#	 	-o "${_HOME}/transcripts/." -f txt 2>&1 >"${_HOME}/log/${_key}-whisper.log"
-	#	#rm "${_path}"
-	#	[ ! -d "${_HOME}/audio" ] && mkdir "${_HOME}/audio"
-	#	mv "${_path}" "${_HOME}/audio/${_file}"
-	#	}
 main() {
 	# read all the positional parameters
   _getOpts "${@}"
