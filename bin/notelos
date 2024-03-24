@@ -231,7 +231,9 @@ _setEnv() {
   _debug "${FUNCNAME[0]} _notelosLAB=${_notelosLAB}"
   # set up git path
 	_notelosGITDIR="${_notelosHOME}/.git"
-  _debug "${FUNCNAME[0]} git version: '$(git -v)'"
+  #_debug "${FUNCNAME[0]} git version: '$(git -v)'"
+	# git 2.34.1 does not accept -v...use --version
+  _debug "${FUNCNAME[0]} git version: '$(git --version)'"
   _debug "${FUNCNAME[0]} git dir: '${_notelosGITDIR}'"
   # set up log details
   _notelosLOGFILE="${_notelosHOME}/.log/${_notelosNAME}.log"
@@ -466,7 +468,7 @@ main user commands on the left, these are the tools
 (these are how the tools were conceived...use them as you please)
 
 the resource tools include
-- docjohnson which has a number of dictionary-like resources
+- johnson which has a number of dictionary-like resources
 - juice extends the dictionary idea to references, eg shakespeare and king james
 - search does the same with anything you save
 
@@ -488,24 +490,23 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 
   h    show help                       === ${red}dsink${reset} ===============
        -----------------------         M  mount      -  restore
-  j    johnson (dictionary)            U  unmount    -  compare
+  J    johnson (dictionary)            U  unmount    -  compare
   -                                    F  format                 
        -----------------------         B  backup     S  status
-  g    germ (notes)                    ==========================
-  -                                    alt-l to lock screen
+  g    germ (notebooks)                ==========================
+  j    journal                         alt-l to lock screen
   e    epistle (letters)               alt-B to set term color scheme
-  -    resume                          alt-i to enable online mode
-  -                                    alt-o to go offline
-  -    plume                           terminal dimensions: $(_termINFO)
-  -                                    CAPSLOCK:$(_capDETECT)
-  -    noam
-  -    seed                            ====== ${cyan}debug${reset} ================
+  r    resume                          alt-i to enable online mode
+                                       alt-o to go offline
+  p    plume                           terminal dimensions: $(_termINFO)
+                                       CAPSLOCK:$(_capDETECT)
+  n    noam
+  s    seed (marginalia)               ====== ${cyan}debug${reset} ================
   -                                    alt-X   toggle bash debug
-  m    record (mnemon)                 alt-D   toggle debug
+  m    mnemon (dictate)                alt-D   toggle debug
   -                                    alt-G   git status
-  -    search                          0       print ENV
+  f    find                            0       print ENV
   q    quit                            alt-t   inspect git with tig
-
 
 "
 	}
@@ -537,6 +538,8 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 	# notice we catch read errors and return true instead...to stay in the loop
 	while read -rsn1 -p "$(_p)" __input || true; do
 	echo
+	# uncomment this to see the actual input key char, plus the dec and hex
+	printf "read key: '%c' '%d' 0x%02x\n" "${__input}" "'${__input}" "'${__input}"
 		case ${__input} in
 			\?)
 				_printShellUsage
@@ -573,7 +576,6 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 				;;
 			g)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
-				#germ || { _warn "an error occurred in germ"; continue; }
 				${_notelosHOME}/.bin/germ || { _warn "an error occurred in germ"; continue; }
 				;;
 			e)
@@ -585,12 +587,12 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 				resume || :
 				;;
 			s)
-				_search || :
+				${_notelosHOME}/.bin/seed || :
 				;;
 			t)
 				_debug "test"
 				;;
-			j)
+			J)
 				${_notelosHOME}/.bin/johnson || :
 				;;
 			T)
@@ -600,11 +602,19 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 				_isTerminalDARK && _notelosTERMMODE=dark || _notelosTERMMODE=light
 				;;
 			$'\e')
-				# read escape keys
+				# method to read escape keys filched from the internet somewhere
+				# https://unix.stackexchange.com/questions/179191/bashscript-to-detect-right-arrow-key-being-pressed
 				read -rsn1 -t .002 _escKey || { echo "the escape key (alone) can be made useful"; continue; }
 				if [[ "$_escKey" == "[" ]]; then
-					# the trailing 'true' prevents 'read' from croaking on "alt-["
+					# for visibility into what's happening here, uncomment the line below
+					# to see the escape keys read
+					printf "read esc key: '%c' '%d' 0x%02x\n" "${_escKey}" "'${_escKey}" "'${_escKey}"
+					# now read the next character and evaluate
 					read -rsn1 -t .002 _escKey || true
+					# the trailing 'OR true' prevents 'read' from croaking on "alt-["
+						# for visibility into what's happening here, uncomment the line below
+						# to see the escape keys read
+						printf "read esc key seq: '%c' '%d' 0x%02x\n" "${_escKey}" "'${_escKey}" "'${_escKey}"
 						case "$_escKey" in
 							"A")
 								echo "up arrow key ($_escKey) can be made useful"
@@ -636,6 +646,9 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 								;;
 						esac
 				else
+					# for visibility into what's happening here, uncomment the line below
+					# to see the escape keys read
+					printf "read esc key: '%c' '%d' 0x%02x\n" "${_escKey}" "'${_escKey}" "'${_escKey}"
 						# no [ means an alt key (or escape sequence?)...it works
 						case "$_escKey" in
 							"i")
@@ -653,7 +666,9 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 								;;
 							"D")
 								[ $_notelosDEBUG = "true" ] && _notelosDEBUG=false || _notelosDEBUG=true
-								#_notelosDEBUG=true
+								# re-initialize all log and console functions
+								_fLOG
+								# see that it is on
 								_debug "enabled debug"
 								;;
 							"t")
@@ -665,11 +680,7 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 							"X")
 								# toggle bash set -x
 								[[ $- == *x* ]] && set +x || set -x
-								#set -x
 								;;
-							#"x")
-							#	set +x
-							#	;;
 							"T")
 								# toggle fg and bg term colors
 								_toggleTerminalBG || _debug "_toggleTerminalBG returned error"
@@ -736,15 +747,27 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 								;;
 						esac
 				fi
+				# this clears out the read pipeline (if there is more)
 				read -rsn6 -t .002 || continue
 				;;
 			$'\177')
-				echo "backspace read; use 'q' to quit"; continue
+				_warn "backspace read; use 'q' to quit"; continue
 				;;
-			$'\04')
-				echo "ctrl-d read: use 'q' to quit"; continue
+			$'\x04')
+				_warn "ctrl-d read: use 'q' to quit"; continue
+				;;
+			$'\x13')
+				# read ctrl-s
+				printf "read '%d'; do search\n" "'${__input}"
+				;;
+			$'\x0c')
+				# read ctrl-l
+				printf "read '%d' %#04x; do johnson\n" "'${__input}" "'${__input}"
 				;;
 			*)
+				# uncomment this to see the actual input key in dec and hex
+				#printf "read '%d' 0x%02x\n" "'${__input}" "'${__input}"
+				# ignore anything not specified above
 				continue
 				;;
 		esac
