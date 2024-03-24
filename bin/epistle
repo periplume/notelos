@@ -157,12 +157,22 @@ _getOpts () {
 				;;
 			new)
 				_subCommand=$1; shift
-				while getopts ":d:" flag; do
+				while getopts ":d:t:i" flag; do
 					case ${flag} in
 						d)
 							# specify alternate date (rather than today)
 							_debug "alternate date specified=${OPTARG}"
 							_altDate="${OPTARG}"
+							;;
+						t)
+							# specify recipient
+							_debug "recipient specified '${OPTARG}'"
+							_specifiedRecipient="${OPTARG}"
+							;;
+						i)
+							# inline (piping data in from a push)
+							_debug "inline input"
+							_inline=true
 							;;
 						?)
 				 			_error "${FUNCNAME}: unknown flag -${OPTARG}"; exit 1
@@ -415,7 +425,12 @@ _new() {
 	local _key
 	local _state
 	local _path
-	_recipient=$(_listRecipients)
+	if [[ -z ${_specifiedRecipient:-} ]]; then
+		# recipient was not specified in parameters
+		_recipient=$(_listRecipients)
+	else
+		_recipient="${_specifiedRecipient}"
+	fi
 	_validateName "${_recipient}" || { _error "name '${_recipient}' not allowed"; return 1; }
 	local _key="${_recipient}_${_date}"
 	local _state="intent"
@@ -425,7 +440,19 @@ _new() {
 	# seed the file
 	local _header="$(printf "%60s\n\n%s,\\\n\\\n" "${_dateHuman}" "${_recipient}")"
 	echo -e "${_header}" > "${_path}"
-	${_EDITOR} "${_path}"
+	if [[ ${_inline:-} = "true" ]]; then
+		# using standard input for the content of the letter
+		# check that its open
+		if [ -p /dev/stdin ]; then
+			_debug "reading letter from stdin"
+			cat >> "${_path}"
+		else
+			_debug "no stdin data to read"
+		fi
+	else
+		# standard interactive add
+		${_EDITOR} "${_path}"
+	fi
 	# check if anything was added to the seeded file
 	if cmp -s "${_path}" <( echo -e "${_header}" ); then
 		_warn "nothing to save"
@@ -466,6 +493,16 @@ _edit() {
 		git -C "${_HOME}" commit -m "edited ${_key}" "${_key}"
 	fi
 }	
+
+_delete() {
+	local _key
+	local _state
+	local _path
+	_key=$(_list) || { _warn "invalid selection"; return; }
+	_state=${_key%%/*}
+	rm "${_HOME}/${_key}"
+	git -C "${_HOME}" commit -m "deleted ${_key}" "${_key}"
+}
 
 _import() {
 	local _importType
@@ -675,6 +712,9 @@ printf "      type ${red}q${reset} to quit\n\n"
 					;;
 				e)
 					_edit || :
+					;;
+				d)
+					_delete || :
 					;;
 				b|l)
 					_list || :
