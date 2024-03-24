@@ -303,8 +303,8 @@ _backup() {
 	# this whole function needs a lot of work now
 	_checkMount || { _warn "dsink usb device not mounted"; return 1; }
 	_rsyncDest="${_MOUNT}"/rsync/
-	rsync -a ${_notelosHOME} "${_rsyncDest}"
-	_info "backup from ${_notelosHOME} to ${_rsyncDest} complete"
+	rsync --exclude .dsink/mount/ -a "${_notelosHOME}" "${_rsyncDest}" &
+	_info "backup from ${_notelosHOME} to ${_rsyncDest} initiated"
 }
 
 _format() {
