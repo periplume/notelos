@@ -157,7 +157,7 @@ _getOpts () {
 				;;
 			add)
 				_subCommand=$1; shift
-				while getopts ":ib" flag; do
+				while getopts ":ibs:" flag; do
 					case ${flag} in
 						i)
 							# inline add (no editor invoked)
@@ -171,6 +171,11 @@ _getOpts () {
 							# without commiting each one...behavior is not correct imo
 							_debug "bulk add operation"
 							_bulk=true
+							;;
+						s)
+							# specify the source notebook for the add
+							_debug "source specified '${OPTARG}'"
+							_addTO="${OPTARG}"
 							;;
 						?)
 				 			_error "${FUNCNAME}: unknown flag -${OPTARG}"; exit 1
@@ -378,12 +383,20 @@ _inspect() {
 _add() {
 	# add a new entry
 	local _currentSource=$(_getSource)
-	local _dir="${_HOME}/${_currentSource}"
+	local _commitMsg
+	# determine if the source notebook has been declared in positional parameters
+	if [[ -z ${_addTO:-} ]]; then
+		# it was not specified, therefore use "current"
+		_useSource=${_currentSource}
+	else
+		_useSource=${_addTO}
+	fi
+	# determine the destination for the file to write
+	local _dir="${_HOME}/${_useSource}"
 	local _key=$(_getNewKey)
 	local _file="${_dir}/${_key}"
-	local _commitMsg
+	# check for piped standard input
 	if [ ${_inline:-null} = "true" ]; then
-		# check for piped standard input
 		# note that pipe input takes priority over message appended to 'add -i'
 		if [ -p /dev/stdin ]; then
 			cat < /dev/stdin > "${_file}"
@@ -392,12 +405,15 @@ _add() {
 			echo "$(_trimString ${_inlineString})" > "${_file}"
 		fi
 	else
+		# catch pipe in without -i
 		[ -p /dev/stdin ] && { _error "use 'add -i' for pipe input"; return 1; }
+		# maybe we don't need the -i?
+		# now just use the editor as usual
 		${_EDITOR} "${_file}"
 	fi
 	[[ -e "${_file}" ]] || return
 	_commitMsg=$(_buildCommitMsg "$(cat "${_file}")")
-	_doCommit "${_currentSource}/${_key}" "[add to ${_currentSource}] ${_commitMsg}"
+	_doCommit "${_useSource}/${_key}" "[add to ${_useSource}] ${_commitMsg}"
 }
 
 _trimString() {
@@ -652,7 +668,7 @@ _namePicker () {
 			--bind="tab:replace-query+first" \
 			--bind="esc:abort" \
 			--preview="${_preview} {q} {}" \
-			--preview-window=60%,wrap
+			--preview-window=80%,wrap
 		);
 		query=$(echo "${_newName}" | head -n1)
 		selection=$(echo "${_newName}" | tail -n1)
