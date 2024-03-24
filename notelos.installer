@@ -29,7 +29,7 @@ _checkSudo() {
 
 _checkExternals() {
 	_required=(git fzf vim)
-	_recommended=(tig paps cargo code-minimap)
+	_recommended=(whisper ffmpeg tig paps cargo code-minimap)
 	_requiredFiles=(vim-plug minimap.vim)
 	_recommendedFiles=(vim-plug minimap.vim)
 	# TODO fix this for files eg vim-plug
