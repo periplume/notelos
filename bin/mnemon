@@ -4,6 +4,9 @@
 # author: jason@bloom.us
 # description: dictate and transcription machine
 
+#TODO after proofing, reformat...remove multple spaces
+# NO, the problem is the viewer...which is removing the CR
+
 # STRICT SHELL
 set -o errexit 
 set -o nounset
@@ -95,7 +98,7 @@ _getOpts () {
 	export _fullCommand="${@}"
 	_debug "full command is '${_fullCommand}'"
 	local OPTIND
-	# do not allow names for notelos or self to be names of germ commands
+	# do not allow names for notelos or self to be names of commands
 	_isCommand() {
 		local _allowed=true
 		local _commandList
@@ -244,19 +247,28 @@ _setEnv() {
 	_debug "$(declare -p _SILENT)"
 	_debug "$(declare -p _LOG)"
 	_debug "$(declare -p _LOGGING)"
-	export _MODE
-	export _MASTER
-	export _NAME
-	export _BASE
+	# TODO stop the export from notelos subordinates (eg mnemon) in order to allow
+	# them to call other subordinates and not confuse them with these generic
+	# values
+	#export _MODE
+	#export _MASTER
+	#export _NAME
+	#export _BASE
 	export _HOME
-	export _USERNAME
-	export _USEREMAIL
-	export _GITDIR
-	export _LOGFILE
-	export _DEBUG
-	export _SILENT
-	export _LOG
-	export _LOGGING
+	export _EDITOR
+	#export _USERNAME
+	#export _USEREMAIL
+	#export _GITDIR
+	#export _LOGFILE
+	#export _DEBUG
+	#export _SILENT
+	#export _LOG
+	#export _LOGGING
+	# need to see if NOT exporting these values will impact mnemon itself
+	# yes, we rely on $_HOME for all fzf-related stuff.  important then not to
+	# inherit _HOME
+	# yes we use _EDITOR as well, but i can think of no conflict with it
+	# in fact, it should be set from _notelosEDITOR
 }
 
 _checkExternalTools() {
@@ -275,7 +287,7 @@ _checkExternalTools() {
 
 _checkHome() {
   # check if the home dir exists
-  # check if it is a germ-created git
+  # check if it is a mnemon-created git
   # return 1 if missing or not git
   # mind condition: if subcommand is create
 	[[ ! -d "${_BASE}" && ${_MODE} = "notelos" ]] && { _error "notelos base not found"; exit 1; }
@@ -336,9 +348,12 @@ _create() {
 	# ignore recordings and import
 	echo "mic/" > "${_HOME}/.gitignore"
 	echo "queue/" >> "${_HOME}/.gitignore"
+	echo "audio/" >> "${_HOME}/.gitignore"
 	# add gitignore and make first commit
-  git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
-  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
+  git -C "${_HOME}" add .gitignore
+  git -C "${_HOME}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
+  #git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
+  #git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
 	# put the installed signature in git description file
   _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
   _time=$(date +%s)
@@ -350,8 +365,467 @@ _create() {
 ##################################
 
 _inspect() {
-	tig -C${_GITDIR}
+	tig -C${_HOME}
 }
+
+# usage:
+# _fzfBrowse _newName   _getSourceList _validateNamePreview "prompt"    "special notes"
+# (function)  (nameref)     (fzf feed)      (fzf preview)     fxf prompt  (fzf header)    
+
+# _browse calls this function as:
+# _fzfBrowse _chosen "ls ${_HOME}/catalog" _previewEntry "all" "? for help"
+_fzfBrowse () {
+	# $1 = nameref for return value
+	# $2 = input function (prints the list of existing whatever)
+	# $3 = validation function for fzf preview window (in which $1=query $2=selection)
+	# $4 = prompt string
+	# $5 = optional special instructions
+	local -n _return=$1
+	local _input=$2
+	local _preview=$3
+	local _prompt=$4
+	export _instructions="${5:-existing above, guidance right >}"
+	_transHeader() {
+		# add a second line to the header with context-specific info in yellow
+		# $1 string message to insert
+		printf "%s\n[\033[38;5;11m%s\033[0m]" "${_instructions}" "${1}"
+	}
+	_showHelp() {
+		printf '
+ +-----------------------------------------------------------+
+ |  mnemon proofing and grouping  |  hit "/" to close help   |
+ +---------------------+-------------------------------------+
+
+ main navigation
+ - alt-P   page up         - alt-H   half page up
+ - alt-p   page down       - alt-h   half page down
+
+ preview navigation
+ - ctrl-[up|down] arrow scrolls the preview window
+ - ctrl-j previews the json output (txt is default)
+
+ audio player
+ - ctrl-p plays the audio in a new window (changes focus)
+ - ctrl-o stops the playing audio
+
+ group naming
+ - ctrl-g   select the current working group name
+ - ctrl-a   add selected key to group (shown in prompt)
+ - ctrl-r   remove selected from group
+ - +/=      view group / view all
+
+for each transcript there are 3 proofing actions
+
+  delete  alt-d  (removes the audio and transcript permanently)
+  accept  alt-a  (moves it to the /proofs directory as is)
+  edit    alt-e  (opens an editor and saves to proofs/ dir)
+
+keep a clean work space'
+	}
+	# export functions to fzf (child)
+	export -f _showHelp
+	export -f _transHeader
+	# set up the ripgrep prefix
+	_rgPrefix="rg --color-always --smart-case "
+	_searchPath="${_HOME}/transcripts/*/*.txt"
+	while true; do
+		_newName=$(fzf \
+			--multi \
+			--disabled \
+			--no-mouse \
+			--ansi \
+			--tac \
+			--print-query \
+			--exact \
+			--info="default" \
+			--prompt="${_prompt}>" \
+			--header="${_instructions}" \
+			--bind="start:reload(${_input})" \
+			--bind="?:change-preview(_showHelp)" \
+			--bind="/:change-preview(${_preview} {q} {})" \
+			--bind="alt-a:transform-header(_transHeader 'accepted')+execute(_approveProof {})+reload(${_input})" \
+			--bind="alt-d:transform-header(_transHeader 'deleted')+execute(_deleteEntry {})+reload(${_input})" \
+			--bind="alt-e:execute(_editProof {} </dev/tty >/dev/tty)" \
+			--bind="alt-P:page-up" \
+			--bind="alt-p:page-down" \
+			--bind="alt-H:half-page-up" \
+			--bind="alt-h:half-page-down" \
+			--bind="ctrl-g:execute(_selectGroup)" \
+			--bind="ctrl-g:+transform-prompt(_updatePrompt)" \
+			--bind="ctrl-g:+reload(_listNames)" \
+			--bind="ctrl-g:+transform-header(_transHeader '= to view all')" \
+			--bind="+:transform-header(_transHeader '= to view all')" \
+			--bind="+:+reload(_listNames)" \
+			--bind="=:transform-header(_transHeader '+ to view group')" \
+			--bind="=:+reload(${_input})" \
+			--bind="ctrl-a:transform-header(_transHeader 'add {}')" \
+			--bind="ctrl-a:+execute-silent(_addToGroup {})" \
+			--bind="ctrl-a:+refresh-preview+down+transform-prompt(_updatePrompt)" \
+			--bind="ctrl-r:transform-header(_transHeader 'rm {}')" \
+			--bind="ctrl-r:+execute-silent(_rmFromGroup {})" \
+			--bind="ctrl-r:+refresh-preview+up+transform-prompt(_updatePrompt)" \
+			--bind="ctrl-p:transform-header(_transHeader 'ctrl-o: stop')+execute-silent(_play {}&)+refresh-preview" \
+			--bind="ctrl-o:transform-header(_transHeader 'stopped')+execute-silent(_stopPlayer)+refresh-preview" \
+			--bind="ctrl-j:transform-header(_transHeader 'ctrl-t txt')+change-preview(${_preview} {q} {} json)" \
+			--bind="ctrl-t:transform-header(_transHeader 'ctrl-p to play')+change-preview(${_preview} {q} {})" \
+			--bind="change:reload(_search {q})" \
+			--bind="alt-j:transform(_transJohnson)" \
+			--bind="esc:abort" \
+			--bind="ctrl-c:transform-header(_transHeader 'ESC to abort')" \
+			--bind="ctrl-q:transform-header(_transHeader 'ESC to abort')" \
+			--bind="backward-eof:transform-header(_transHeader 'ESC to abort')" \
+			--bind="ctrl-z:transform-header(_transHeader 'no ctrl-z')" \
+			--preview="${_preview} {q} {} txt" \
+			--preview-window=80%,wrap,~7,border-double
+		);
+		# we expect the first line to be the query
+		# and the second line to be the selection (no multi yet)
+		query=$(echo "${_newName}" | head -n1)
+		selection=$(echo "${_newName}" | tail -n1)
+		selection=$(echo "${_newName}" | tail +2)
+		_debug "${FUNCNAME[0]} full return is '${_newName}'"
+		_debug "${FUNCNAME[0]} query is '${query}'"
+		_debug "${FUNCNAME[0]} selection is '${selection}'"
+		# we return both, separated by colon
+		_return="${query}:${selection}"
+		break
+		# TODO now with multi-select...we need to be smarter about the return
+	done
+}
+# discarded fzf directives (aborted experiments)
+		#	--bind="ctrl-s:transform-header(_transHeader 'search with rg')" \
+		#	--bind="ctrl-s:+change-prompt(search:)" \
+		#	--bind="ctrl-s:+reload(rg --color=always --line-number --smart-case --no-heading {q} $_searchPath)" \
+
+
+_transJohnson() {
+	#echo "change-prompt(johnson:)+transform-header(_transHeader 'john')"
+	echo -n "change-prompt(johnson:)"
+	echo -n "+transform-header(_transHeader 'john')"
+	echo
+}
+export -f _transJohnson
+
+_search() {
+	# this function returns a list of keys whose transcripts match the pattern
+	# used by rg ($1, ie the query typed into fzf during _browse), and this list
+	# of keys is used by fzf to populate the main list...then the whole file (and
+	# metadata) is displayed in the fzf preview window using the _previewEntry
+	# function, which also highlights the query term as well as show tags (#TAG,
+	# ie hash sign followed by alphanum and ended with space)
+	#
+	# arg1 = the search term
+	#
+	# first get the list of keys in the active view (either "all" or filtered by group)
+	_keyList=$(_listNames)
+	# check if $1 is empty, in which case, just return the full key list
+	[[ -z "$1" ]] && { echo "${_keyList}"; return; }
+	# next search the whole shebang for the match (smarter would be search with
+	# filter)
+	_fullList=$(rg --files-with-matches --smart-case $1 ${_HOME}/transcripts/*/*.txt)
+	#
+	_allKeys=$(echo "${_fullList}" | xargs -n 1 basename -s .txt)
+	# finally compare the list of keys in the active view and the list that rg
+	# returned, and only show those that match (yes this is inefficient)
+	comm -12 <(echo "${_allKeys}" | sort) <(echo "${_keyList}" | sort)
+}
+export -f _search
+##TODO huge bug here...if the proof exists...we need to swap the path from transcript to proof...going to 
+# get really messy
+# create new subdir called current
+# symbolic link key.txt to either proof/key.txt or transcript.txt
+# otherwise rethink the workflow idea...and let the transcript always be the
+# only one
+
+# TODO ctrl-a and ctrl-r should not act on group all
+
+#TODO use query to search transcripts; colorize the search term
+# ctrl-a and ctrl-r UNTESTED
+
+_getCurrentGroup() {
+	# read state for the current group name
+	local _currentGroup
+	if [ -e "${_HOME}/state/browser/group" ]; then
+		_currentGroup=$(find "${_HOME}/state/browser/group" -maxdepth 1 -type d -empty -print -quit)
+		_currentGroup=$(basename "${_currentGroup}")
+	else
+		_currentGroup="all"
+	fi
+	echo "${_currentGroup}"
+}
+export -f _getCurrentGroup
+
+_setGroup() {
+	# change state to new group name
+	local _newGroup="$1"
+	local _currentGroup
+	# updates group name in state dir
+	if [[ -e "${_HOME}/state/browser/group" ]]; then
+		_currentGroup=$(_getCurrentGroup)
+		rmdir "${_HOME}/state/browser/group/${_currentGroup}"
+	fi
+	mkdir -p "${_HOME}/state/browser/group/${_newGroup}"
+}
+export -f _setGroup
+
+_updatePrompt() {
+	# used by transform-prompt
+	# append the signifier
+	local _prompt
+	name=$(_getCurrentGroup)
+	if [[ ${name} = "all" ]]; then
+		_prompt="all>"
+	else
+		count=$(ls "${_HOME}/names/${name}" | wc -l)
+		_prompt="${name} [${count}] >"
+	fi
+	echo "${_prompt}"
+}
+export -f _updatePrompt
+
+_listNames() {
+	local name
+	# list only the keys in the active group (unless empty, then list all)
+	name=$(_getCurrentGroup)
+	if [ ${name} = "all" ]; then
+		# if name is 'all' then list full catalog
+		ls ${_HOME}/catalog
+	else
+		if [ -z "$(find "${_HOME}/names/${name}" -mindepth 1 -maxdepth 1)" ]; then
+			# empty group, list all
+			ls ${_HOME}/catalog
+		else
+			ls ${_HOME}/names/${name}
+		fi
+	fi
+}
+export -f _listNames
+
+_selectGroup() {
+	# function called by _fzfBrowse to select existing or create a new group and
+	# make it the active group (indicated in prompt as 'group>')
+	# make the names dir if it does not already exist
+	# no args
+	[[ -d "${_HOME}/names" ]] || mkdir "${_HOME}/names"
+	# use the _namePicker fzf wrapper function to choose a new group
+	_namePicker _chosen "ls ${_HOME}/names" _validateName "names" "? for help"
+	# if nothing was chosen, use the default
+	[[ ${_chosen} = ":" ]] && { echo $(_getCurrentGroup); return; }
+	# unwrap the fzf return string and figure out what was intended
+	_selection=${_chosen#*:}
+	_query=${_chosen%%:*}
+	# if query is empty then we only have selection
+	if [[ -z ${_query} ]]; then
+	 	_nameSelected=${_selection}
+	# if query and selection are the same, easy
+	elif [[ ${_query} == ${_selection} ]]; then
+	 	_nameSelected=${_query}
+	# if query and selection are not the same...use query
+	elif [[ ${_query} != ${_selection} ]]; then
+		_nameSelected=${_query}
+	fi
+	# check if new or existing
+	if _doesNameExist "${_nameSelected}"; then
+		# existing
+		true
+	else
+		# validate name with _isNameValid
+		if _isNameValid "${_nameSelected}"; then
+			mkdir "${_HOME}/names/${_nameSelected}"
+		else
+			# invalid name, just return with current
+			echo $(_getCurrentGroup)
+			return
+		fi
+	fi
+	# finally update state with the new group name
+	_setGroup "${_nameSelected}"
+}
+export -f _selectGroup
+
+#TODO
+# fold functions into _fzfBrowse
+# functions
+# create a group name
+# switch to a group name
+# add/remove selected to/from current group name
+#
+# manipulation of group names:	_nameGroup
+# options
+# select a group to be the active group
+# select a group for single or multi selected mnemons to be added
+# create a new group
+#
+# manipulation of mnemons:			_fzfBrowse
+# operations on single (or multiple) mnemons
+# delete/approve/edit (proof)
+# add/remove selected (single or multi) to a group (new or existing)
+
+
+
+
+# additionally, we can play the audio at faster (or slower) speeds with
+# ffplay -af "atempo=1.5" 
+
+
+#TODO challenge to unify the main viewer (_browse) with the group manipulation
+# _fzfBrowse and _namePicker
+
+_validateName() {
+	# function used within fzf preview window to assist in the selection of a
+	# name
+	# fzf preview passes:
+	# arg 1 is query
+	# arg 2 is the current group name
+	# arg 3 is the selected name
+	local _maxLength=25
+	local _minLength=1
+	local _newSourceName
+	local lengthStatus
+	local avail
+	local allowedChars="n/a"
+	local lead="n/a"
+	local last="n/a"
+	local repeat="n/a"
+	local acceptable="NO"
+	_cStat() {
+		# arg 1 = key word
+		# print the key word in a set color
+		[[ "${1}" =~ ^(YES|OK) ]] && tput setaf 2
+		[[ "${1}" =~ ^(NO|TOO) ]] && tput setaf 1
+		[[ "${1}" =~ ^(n/a) ]] && tput setaf 3
+		echo -n "${1}"
+		tput sgr0 
+	}
+	# export to fzf for --preview
+	export -f _cStat
+	# validate the name first
+	if [[ ${#1} -lt ${_minLength} ]]; then
+		lengthStatus="TOO SHORT"
+		avail="n/a"
+	elif [[ ${#1} -gt ${_maxLength} ]]; then
+		lengthStatus="TOO LONG"
+		avail="n/a"
+	else
+		lengthStatus="OK"
+		# check if its new
+		[[ -e "${_HOME}/names/${1}" ]] && { avail="NO"; acceptable="NO"; } || \
+			{ avail="YES"; acceptable="YES"; }
+	fi
+	[[ "${1}" =~ ^[[:lower:]|[:digit:]] ]] && lead="YES" || { lead="NO" ; acceptable="NO" ; }
+	[[ "${1}" =~ [[:lower:]|[:digit:]]$ ]] && last="YES" || { last="NO" ; acceptable="NO" ; }
+	[[ "${1}" =~ ^([[:lower:]|[:digit:]]|[-_.])*$ ]] && allowedChars="YES" || { allowedChars="NO" ; acceptable="NO" ; }
+	[[ ! "${1}" =~ ([.]|[-]|[_]){2} ]] && repeat="YES" || { repeat="NO" ; acceptable="NO" ; }
+	# print the validation info into the fzf preview window
+	echo "----VALID NAME?  $(_cStat ${acceptable}) --------------"
+	[[ -z "${1}" ]] && echo "waiting for input..." || echo "name: '${1}'"
+	printf "length [%.2d]: %31s\n" ${#1} "$(_cStat "${lengthStatus}")"
+	printf "unique: %36s\n" "$(_cStat "${avail}")"
+	printf "character set allowed: %21s\n" "$(_cStat "${allowedChars}")"
+	printf "first ['%s'] allowed: %23s\n" "${1:0:1}" "$(_cStat "${lead}")"
+	printf "last ['%s'] allowed: %24s\n" "${1:(-1)}" "$(_cStat "${last}")"
+	printf "no non-alpha/num repeats: %18s\n" "$(_cStat "${repeat}")"
+	echo
+	echo "-----------RULES------------------"
+	echo "the name must be unique"
+	echo "max length is ${_maxLength}, min is ${_minLength}"
+	echo "lower case and numbers only"
+	echo "non alpha-numeric characters allowed:"
+	echo " - dash (-)"
+	echo " - underscore (_)"
+	echo " - dot (.)"
+	echo " ^ these cannot be first or last"
+	echo " ^ cannot be repeated (eg --)"
+	echo
+	echo "-----------STATUS-----------------"
+	if [ -z "${1}" ]; then
+		# query is empty...show selected
+		file_count=$(find "${_HOME}/names/${3}" -type f | wc -l)
+		echo "found ${file_count} entries in the group '${3}'"
+	else
+		# query is not empty, show query
+		if [ -e "${_HOME}/names/${1}" ]; then
+			file_count=$(find "${_HOME}/names/${1}" -type f | wc -l)
+			echo "found ${file_count} entries in the group '${1}'"
+		else
+			echo "group '${1}' does not exist"
+		fi
+	fi
+}
+# export above function to fzf for --preview
+export -f _validateName
+
+_showName() {
+	# preview window displaying the list of keys in the name
+	ls "${_HOME}/names/${1}"
+}
+export -f _showName
+
+_showGroup() {
+	# arg 1 = key
+	# print the group the key is added to
+	# otherwise return empty string
+	result=$(find "${_HOME}/names" -type f -name "${1}" -print -quit)
+	if [ -n "${result}" ]; then
+		group="${result#"${_HOME}/names/"}"
+		group="${group%/"${1}"}"
+		echo "${group}"
+	else
+		echo ""
+	fi
+	# ugly but it works
+}
+export -f _showGroup
+
+_addToGroup() {
+	# add $1 key to current group
+	# only allow each key to be added to one group
+	local _key=$1
+	local _group=$(_getCurrentGroup)
+	# ignore actions on group 'all'
+	[[ ${_group} = "all" ]] && return
+	if [[ -z $(_showGroup ${1}) ]]; then
+		# key is not in any group
+		touch "${_HOME}/names/${_group}/${_key}"
+	fi
+}
+export -f _addToGroup
+
+_rmFromGroup() {
+	# rm $1 key from current group
+	local _key=$1
+	local _group=$(_getCurrentGroup)
+	rm "${_HOME}/names/${_group}/${_key}"
+}
+export -f _rmFromGroup
+
+_doesNameExist() {
+	[[ -d "${_HOME}/names/${1}" ]]
+}
+export -f _doesNameExist
+
+_isNameValid() {
+	local _maxLength=25
+	local _minLength=1
+	# arg 1 = source name
+	if [[ "${1}" =~ ^([[:lower:]|[:upper:]|[:digit:]]|[-_.]){${_minLength},${_maxLength}}$ ]]; then
+		[[ "${1}" =~ ^[[:lower:]|[:digit:]] ]] || return 1
+		[[ "${1}" =~ [[:lower:]|[:digit:]]$ ]] || return 1
+		[[ "${1}" =~ ([.]|[-]|[_]){2} ]] && return 1
+		if _doesNameExist "${1}"; then
+			_warn "'${1}' is not new"
+			return 1
+		else
+			return 0
+		fi
+	else
+		_warn "'${1}' is not allowed, try again"
+		_info "rules: a-z A-Z 0-9 _ - . allowed; no spaces allowed"
+		_info "rules: max length ${_maxLength} characters, min is ${_minLength}"
+		return 1
+	fi
+}
+export -f _isNameValid
 
 # usage:
 # _namePicker _newName   _getSourceList _validateNamePreview "prompt"    "special notes"
@@ -362,8 +836,6 @@ _namePicker () {
 	# $3 = validation function for fzf preview window (in which $1=query $2=selection)
 	# $4 = prompt string
 	# $5 = optional special instructions
-	# basically an fzf wrapper for name selection to be used globally
-	# single level only and single selection
 	local -n _return=$1
 	local _input=$2
 	local _preview=$3
@@ -377,27 +849,25 @@ _namePicker () {
 	_showHelp() {
 		printf '
  +------------------------------------------------+
- |  mnemon proofing    |  hit "/" to close help   |
+ |  mnemon naming      |  hit "/" to close help   |
  +---------------------+--------------------------+
 
-you are viewing the whisper-produced transcripts
+ first, choose a new name to create a new group
+ or choose and existing to modify a group
+ the ACTIVE group will then be shown in the prompt:
+ group>
 
- - ctrl-[up|down] arrow scrolls the preview window
- - ctrl-j previews the json output (txt is default)
- - ctrl-p plays the audio in the background
- - ctrl-o stops the playing audio
+ to add an item to the selected group
+ ctrl-a
 
-for each transcript there are only 3 actions
+ to remove an item, use
+ ctrl-r
 
-  1. delete    alt-d
-  2. accept    alt-a
-  3. edit      alt-e
+ items can only be added to ONE group
 
-delete removes the audio and transcript permanently
-accept moves it to the /proofs directory as is
-edit opens an editor and saves to proofs/ dir
+ to delete a group, use ctrl-delete
 
-keep a clean work space'
+have fun...these are empty pointer files'
 	}
 	export -f _showHelp
 	export -f _transHeader
@@ -405,8 +875,8 @@ keep a clean work space'
 		_newName=$(fzf \
 			--no-multi \
 			--no-mouse \
-			--disabled \
 			--ansi \
+			--keep-right \
 			--print-query \
 			--exact \
 			--info="hidden" \
@@ -414,32 +884,45 @@ keep a clean work space'
 			--header="${_instructions}" \
 			--bind="start:reload(${_input})" \
 			--bind="?:change-preview(_showHelp)" \
-			--bind="/:change-preview(${_preview} {q} {})" \
-			--bind="focus:transform-header(_transHeader 'ctrl-p: play')" \
-			--bind="alt-a:transform-header(_transHeader 'accepted')+execute(_approveProof {})+reload(${_input})" \
-			--bind="alt-d:transform-header(_transHeader 'deleted')+execute(_deleteEntry {})+reload(${_input})" \
-			--bind="alt-e:become(_editProof {} </dev/tty >/dev/tty)" \
+			--bind="/:change-preview(${_preview} ${_prompt} {})" \
+			--bind="ctrl-a:transform-header(_transHeader 'add {}')+execute-silent(_addToGroup {} ${_prompt})+refresh-preview+up" \
+			--bind="ctrl-r:transform-header(_transHeader 'rm {}')+execute-silent(_rmFromGroup {} ${_prompt})+refresh-preview+up" \
+			--bind="ctrl-delete:transform-header(_transHeader 'deleted')+execute-silent(rmdir "${_HOME}/names/${_prompt}")+reload(${_input})" \
 			--bind="ctrl-c:transform-header(_transHeader 'ESC to abort')" \
 			--bind="ctrl-q:transform-header(_transHeader 'ESC to abort')" \
-			--bind="ctrl-p:transform-header(_transHeader 'ctrl-o: stop')+execute-silent(_play {}&)+refresh-preview" \
-			--bind="ctrl-o:transform-header(_transHeader 'stopped')+execute-silent(_stopPlayer)+refresh-preview" \
 			--bind="ctrl-z:transform-header(_transHeader 'no ctrl-z')" \
-			--bind="ctrl-j:transform-header(_transHeader 'ctrl-t txt')+change-preview(${_preview} {q} {} json)" \
-			--bind="ctrl-t:transform-header(_transHeader 'ctrl-p to play')+change-preview(${_preview} {q} {})" \
 			--bind="backward-eof:transform-header(_transHeader 'ESC to abort')" \
+			--bind="tab:replace-query" \
 			--bind="esc:abort" \
-			--preview="${_preview} {q} {} txt" \
+			--preview="${_preview} {q} ${_prompt} {}" \
 			--preview-window=80%,wrap,~5,border-double
 		);
-			#--bind="alt-a:transform-header(_transHeader 'accepted')+execute(mv ${_HOME}/transcripts/{} ${_HOME}/proofs/{})+reload(${_input})" \
 		query=$(echo "${_newName}" | head -n1)
 		selection=$(echo "${_newName}" | tail -n1)
-		#_debug "query is '${query}'"
-		#_debug "selection is '${selection}'"
+		_debug "${FUNCNAME[0]} query is '${query}'"
+		_debug "${FUNCNAME[0]} selection is '${selection}'"
 		_return="${query}:${selection}"
 		break
 	done
 }
+export -f _namePicker
+
+#TODO add a feature to _browse (_fzfBrowse)
+# toggle fzf view between
+# --tac and --notac
+# turns out this is important
+
+#TODO add to _import
+# add to catalog the import time, the whisper transcription duration
+#
+# note, importing whatsapp m4a recordings does not yield the metadata that the
+# voice memo app does (esp the create time)
+# whatsapp encodes the creation time (i think) into the filename
+# eg AUDIO-2022-10-12-06-58-40.m4a
+# translates to "delivered" on oct 12, 2022 at 6:58:40 AM
+# so to properly tag the voice recordings from whatsapp, i would need to
+# identify the file name pattern and get a key based on that hueristic
+# everything becomes more messy as you go
 
 _getMediaFile() {
 	# print the media file name
@@ -459,6 +942,10 @@ _getMediaFile() {
 		[[ -d "${_HOME}/transcriptions/${_key}" ]] && _transcrpt=true
 		# check for active transcription job with this key
 		# add key to transcription pipeline (like import)
+		# check media type and file size
+		# measure how long transcription takes and record that
+		# develop an "estimated time" algorithm which assigns a value to this based
+		# on the historical (on this system...session...etc)
 		return
 	fi
 	echo "$(basename ${_audio})"
@@ -475,20 +962,53 @@ _deleteEntry() {
 export -f _deleteEntry
 
 _previewEntry() {
+	local _query=${1:-}
 	local _type=${3:-txt}
 	local _key=$2
 	local _file
 	local _duration
 	local _isPlaying
-	_file=$(_getMediaFile ${_key})
+	if [ -z "${2}" ]; then
+		# no key...ie no match
+		echo "no matching key"
+		echo "query (as arg1) is '${_query}'"
+		echo "group (from _getCurrentGroup) is $(_getCurrentGroup)"
+		echo "arg1: ${1}"
+		echo "arg2: ${2}"
+		echo "arg3: ${3}"
+		return
+	else
+		# get the audio file name
+		_file=$(_getMediaFile ${_key})
+	fi
 	if [[ -z ${_file} ]]; then
 		# there is no found file in audio/ but it may be in queue
 	 	echo "nothing yet (probably transcribing now)"
 		[[ -e "${_HOME}/queue/${_key}.wav" ]] && echo "wav file is in the queue"
 		[[ -e "${_HOME}/queue/${_key}.m4a" ]] && echo "m4a file is in the queue"
+		[[ -e "${_HOME}/catalog/${_key}" ]] && echo "key '${_key}' is in the calalog"
+		echo "query (as arg1) is '${_query}'"
+		echo "group (from _getCurrentGroup) is $(_getCurrentGroup)"
+		echo "arg1: ${1}"
+		echo "arg2: ${2}"
+		echo "arg3: ${3}"
 		return
 	fi
-	_duration=$(ffprobe -v error -sexagesimal -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${_HOME}/audio/${_file}")
+	# get the duration from the media file with ffprobe
+	_ffprobe_duration=$(ffprobe -v error -sexagesimal -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${_HOME}/audio/${_file}")
+	# trim it down
+	IFS=':' read -r hours minutes seconds _ <<< "${_ffprobe_duration}"
+	# Remove leading zeros from hours and minutes if present
+	hours=${hours#0}
+	minutes=${minutes#0}
+	# Print the formatted time
+	if [[ -n "$hours" ]]; then
+		_duration=$(echo "${hours}:${minutes}:${seconds%.*}")
+	elif [[ "$minutes" == "0" ]]; then
+		_duration=$(echo "${seconds%.*} seconds")
+	else
+		_duration=$(echo "${minutes}:${seconds%.*}")
+	fi
 	# check if this key is playing or not
 	if [[ -d "${_HOME}/state/player/playing" ]]; then
 		_playingNow=$(basename "${_HOME}/state/player/playing"/*)
@@ -497,16 +1017,33 @@ _previewEntry() {
 			_isPlaying=$'\x1b[38;5;5;5mplaying\x1b[0m'
 		fi
 	fi
+	# get (and trim) the original name (if it exists)
+	if [[ -e "${_HOME}/catalog/${_key}/original_name" ]]; then
+		_originalName=$(cat "${_HOME}/catalog/${_key}/original_name")
+		_originalName=${_originalName%.*}
+	else
+		_originalName="recorded on $HOSTNAME"
+	fi
+	# check if key is added to a group
+	_group=$(_showGroup ${_key})
 	printf '  +--%-31s----------+\n' "$(date -d @${_key})"
 	printf '  |  media:    %-23s%-7s |\n' "${_file}" "${_isPlaying}"
-	printf '  |  duration:  %-30s|\n' "${_duration}"
+	printf '  |  name:     %-30s |\n' "${_originalName}"
+	printf '  |  group:    %-30s |\n' "${_group}"
+	printf '  |  search:   %-30s |\n' "${_query}"
+	printf '  |  duration: %-30s |\n' "${_duration}"
 	if [ ${_type} = "txt" ]; then
 		# reformat the txt into a single paragraph that fits the preview window
 		# figure out the preview window width, which is 80% cols
 		_termcols=$(tput cols)
 		_previewcols=$((_termcols * 85 / 100))
+		if [ $_previewcols -gt 70 ]; then
+			_previewcols=70
+		fi
 		# highlight tags in green
 		_tag='\x1b[1;32m' ; _rst='\x1b[0m'
+		# highlight search term with yellow
+		_search='\x1b[1;43m'
 		# display the proofed version if it exists
 		if [ -e "${_HOME}/proofs/${_key}.txt" ]; then
 			_proofed=true
@@ -515,23 +1052,26 @@ _previewEntry() {
 			_proofed=false
 			local _path="${_HOME}/transcripts/${_key}/${_key}.txt"
 		fi
+		# grab the word count of the txt for display
+		_wordCount=$(wc -w "${_path}" | cut -f1 -d' ')
 		[[ ${_proofed} = "true" ]] && _contentState=$'\033[38;5;2m proofed \033[0m' || _contentState=$'\x1b[38;5;3munproofed\x1b[0m' 
-		printf '  +---[ %-4s ]--[ %-10s ]-----------------+\n\n' "${3:-txt}" "${_contentState}"
-		cat "${_path}" | tr '\n' ' ' | fold -s -w ${_previewcols} | sed -E "s/#([[:alnum:]-]+)/${_tag}#\1${_rst}/g"
+		printf '  +---[ %-4s ]--[ %-10s ]----[ %-5s ]----+\n\n' "${3:-txt}" "${_contentState}" "${_wordCount}"
+		#cat "${_path}" | tr '\n' ' ' | fold -s -w ${_previewcols} | sed -E "s/#([[:alnum:]-]+)/${_tag}#\1${_rst}/g"
+		#TODO reformat more elegantly...preserve bare new lines
+		if [[ -z "${_query}" ]]; then
+			cat "${_path}" | fmt -w ${_previewcols} | sed -E "s/#([[:alnum:]-]+)/${_tag}#\1${_rst}/g"
+		else
+			# very dirty means of highlighting the query in the text (only when there
+			# is a query)
+			cat "${_path}" | fmt -w ${_previewcols} | sed -E "s/#([[:alnum:]-]+)/${_tag}#\1${_rst}/g" | sed -E "s/${_query}/${_search}&${_rst}/Ig"
+		fi
+		#
 	elif [ ${_type} = "json" ]; then
 		printf '  +------[ %-4s ]-----------------------------+\n\n' "${_type}"
 		cat "${_HOME}/transcripts/${2}/${2}.json" | jq -C
 	fi
 }
 export -f _previewEntry
-
-#TODO set up named pipe for ffplay
-# then we can send it commands like pause, forward, etc
-# pause/unpause (send 'p' to /proc/PID/fd/0) or echo 'p' >&"${FFPLAY[0]}"
-# nope, need to open named pipes for this
-# stop (send 'q' to /proc/PID/fd/0) or echo 'q' >&"${FFPLAY[0]}"
-# slow/speed (these need to be preset VARS and included in the cli invocation of
-# the player)
 
 _stopPlayer() {
 	if [[ -e "${_HOME}/state/player/playing" ]]; then
@@ -612,9 +1152,9 @@ _play() {
 	fi
 	_debug "got the file type '${_audio}'"
 	# run as coproc and set state
-	coproc FFPLAY { ffplay -autoexit \
-	 	-nodisp "${_audio}" \
-		>/dev/null 2>&1 &
+	#coproc FFPLAY { ffplay -autoexit "${_audio}" >/dev/null 2>&1 &
+	coproc { ffplay -hide_banner -autoexit -loglevel quiet -x 500 -y 200 -top 0 -left 0 -showmode 1 \
+		"${_audio}" >/dev/null 2>&1 &
 		_coproc_playerPID=$!;
 		mkdir -p "${_HOME}/state/player/playing/${_key}";
 		mkdir -p "${_HOME}/state/player/pid";
@@ -634,22 +1174,55 @@ _play() {
 	_debug "start ffplay monitor..."
 	# run the pid monitor function in the background
 	_monitorPID "${_monitor_pid}" &
-	#TODO experiment with using nohup for this process...to clean up
-	# note the monitor job so we can stop it if _play is called again
+	# register the monitor pid into the state dir
 	echo $! > "${_HOME}/state/player/monitor"
 	_debug "_play function done."
 }
 export -f _play
 
+# ffplay manipulation
+# right/left arrows seek forward/back 10 seconds (-seek_interval)
+# atempo for slower/faster playback
+
+
+
+#NOTE that ffplay, while it can be controlled with keystrokes when it is in the foreground,
+# for example, p for pause, etc, it does not listen to stdin, so we cannot bg
+# the process and connect stdin to a named pipe in order to send the control
+# commands from another process.  so, the "stop" mechanism we use through the
+# pid is the only way to accomplish the external control of ffplay while it
+# plays in the background.  too bad there isn't a more fine-grained means of
+# controlling ffplay behavior.  brute force is sometimes the only way.  the only
+# way to add pause, speed-up, functions would be to track the play time
+# externally and then restart at a specific point in the recording, ie restart
+# with parameters to mimic the pause, speed-up etc features.  too much effort,
+# although anything is possible.
+
 _editProof() {
 	# $1 is the _key in transcripts/ and catalog/
 	local _path="${_HOME}/transcripts/${1}/${1}.txt"
-	[[ -e "${_HOME}/proofs/${1}.txt" ]] && { _warn "proof already exists"; return; }
-	# cp the file to proofs (formatted nicely)
-	cat "${_path}" | tr '\n' ' ' | fold -s -w 66 > "${_HOME}/proofs/${1}.txt"
-	vim "${_HOME}/proofs/${1}.txt"
-  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/proofs/${1}.txt"
-  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[edit] proof of ${1} saved"
+	local _file_timestamp_before
+	local _file_timestamp_after
+	if [[ -e "${_HOME}/proofs/${1}.txt" ]]; then
+		_warn "proof already exists"
+		# no need to copy anything
+	else
+		# first time editing
+		# cp the file to proofs (formatted nicely)
+		cat "${_path}" | tr '\n' ' ' | fold -s -w 66 > "${_HOME}/proofs/${1}.txt"
+	fi
+	_file_timestamp_before=$(stat -c %Y "${_HOME}/proofs/${1}.txt")
+	${_EDITOR} "${_HOME}/proofs/${1}.txt"
+	_file_timestamp_after=$(stat -c %Y "${_HOME}/proofs/${1}.txt")
+	if [ "${_file_timestamp_before}" -ne "${_file_timestamp_after}" ]; then
+		# file changed
+  	git -C "${_HOME}" add "${_HOME}/proofs/${1}.txt"
+  	git -C "${_HOME}" commit -q -m "[edit] proof of ${1} saved"
+  	#git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/proofs/${1}.txt"
+  	#git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[edit] proof of ${1} saved"
+	else
+		_warn "proof ${1}.txt did not change"
+	fi
 }
 export -f _editProof
 
@@ -659,8 +1232,10 @@ _approveProof() {
 	[[ -e "${_HOME}/proofs/${1}.txt" ]] && { _warn "proof already exists"; return; }
 	# cp the file to proofs (formatted nicely)
 	cat "${_path}" | tr '\n' ' ' | fold -s -w 66 > "${_HOME}/proofs/${1}.txt"
-  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/proofs/${1}.txt"
-  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[approve] proof of ${1} saved"
+  git -C "${_HOME}" add "${_HOME}/proofs/${1}.txt"
+  git -C "${_HOME}" commit -q -m "[approve] proof of ${1} saved"
+  #git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/proofs/${1}.txt"
+  #git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[approve] proof of ${1} saved"
 }
 export -f _approveProof
 
@@ -687,6 +1262,12 @@ _shell() {
 		[[ "${1}" =~ ^(unknown) ]] && { tput blink; tput setaf 2; }
 		[[ "${1}" =~ ^(importing) ]] && { tput blink; tput setaf 3; }
 		[[ "${1}" =~ ^(transcribing) ]] && { tput blink; tput setaf 4; }
+		# iphone green attached; yellow detached
+		[[ "${1}" =~ ^(attached) ]] && { tput setaf 2; }
+		[[ "${1}" =~ ^(detached) ]] && { tput setaf 3; }
+		# iphone mount state
+		[[ "${1}" =~ ^(mounted) ]] && { tput setaf 2; }
+		[[ "${1}" =~ ^(unmounted) ]] && { tput setaf 3; }
 		echo -n "${1}"
 		tput sgr0
 	}
@@ -810,13 +1391,198 @@ _shell() {
 		rm -rf "${_HOME}/state/mic/progressfile"
 		rm -rf "${_HOME}/state/mic/logfile"
 	}
+
+	_name() {
+		# a funky function...sadly
+		# name transcript groups and manage keys in the named group
+		[[ -d "${_HOME}/names" ]] || mkdir "${_HOME}/names"
+		# use _namePicker to select name conforming to naming convention
+		_namePicker _chosen "ls ${_HOME}/names" _validateName "names" "? for help"
+		[[ ${_chosen} = ":" ]] && { _warn "nothing to do"; return; }
+		_selection=${_chosen#*:}
+		_query=${_chosen%%:*}
+		_info "got query='${_query}' and selection='${_selection}' from '${_chosen}'"
+		# if query is empty then we only have selection
+		if [[ -z ${_query} ]]; then
+		 	_nameSelected=${_selection}
+			_debug "using selection because query is empty"
+		# if query and selection are the same, easy
+		elif [[ ${_query} == ${_selection} ]]; then
+		 	_nameSelected=${_query}
+			_debug "using query because selection is the same"
+		# if query and selection are not the same...use query
+		elif [[ ${_query} != ${_selection} ]]; then
+			_nameSelected=${_query}
+			_debug "using query because selection is not the same"
+		fi
+		# check if new or existing
+		if _doesNameExist "${_nameSelected}"; then
+			# existing
+			true
+		else
+			# validate name with _isNameValid
+			if _isNameValid "${_nameSelected}"; then
+				mkdir "${_HOME}/names/${_nameSelected}"
+			else
+				_warn "invalid name '${_nameSelected}'"
+				return
+			fi
+		fi
+		# now use namepicker again to add/remove keys to/from the selected name
+		# fzf uses ctrl-a and ctrl-r to add and remove the selected key
+		#_namePicker _chosen "ls ${_HOME}/catalog" _showName "${_nameSelected}" "? for help"
+		_namePicker _chosen "ls ${_HOME}/catalog" _previewEntry "${_nameSelected}" "? for help"
+		#TODO commit
+		#TODO this should be one function with one fzf call...all the operations can be
+		# functionized, and use can stay in fzf...more work...but it works now
+	}
+	
+
+	_push() {
+		# use _namePicker to select name conforming to naming convention
+		_namePicker _chosen "ls ${_HOME}/names" _validateName "select group" "? for help"
+		[[ ${_chosen} = ":" ]] && { _warn "nothing to do"; return; }
+		_selection=${_chosen#*:}
+		_query=${_chosen%%:*}
+		_info "got query='${_query}' and selection='${_selection}' from '${_chosen}'"
+		# if query is empty then we only have selection
+		if [[ -z ${_query} ]]; then
+		 	_nameSelected=${_selection}
+			_debug "using selection because query is empty"
+		# if query and selection are the same, easy
+		elif [[ ${_query} == ${_selection} ]]; then
+		 	_nameSelected=${_query}
+			_debug "using query because selection is the same"
+		# if query and selection are not the same...use query
+		elif [[ ${_query} != ${_selection} ]]; then
+			_nameSelected=${_query}
+			_debug "using query because selection is not the same"
+		fi
+		# check if new or existing
+		if ! _doesNameExist "${_nameSelected}"; then
+			_warn "cannot push invalid name '${_nameSelected}'"
+			return 1
+		fi
+		# existing
+		_debug "push '${_nameSelected}'"
+		read -r -p "$(_ask 'push to what? ')" _pushDestination
+		if [[ ${_pushDestination} = "epistle" ]]; then
+			read -r -p "$(_ask 'epistle to whom? ')" _epistleRecipient
+			for key in $(ls "${_HOME}/names/${_nameSelected}"); do
+				if [[ -e "${_HOME}/proofs/${key}.txt" ]]; then
+					printf "\n"
+					cat "${_HOME}/proofs/${key}.txt" | tr '\n' ' ' | fold -s -w 66
+					printf "\n"
+				else
+					printf "\n"
+					cat "${_HOME}/transcripts/${key}/${key}.txt" | tr '\n' ' ' | fold -s -w 66
+					printf "\n"
+				fi
+			#done | _notelosHOME="${_BASE}" "${_BASE}/.bin/epistle" -d -a epistle -p "${_BASE}" new -i -t "${_epistleRecipient}"
+			# pipe it all into one document
+			done | "${_BASE}/.bin/epistle" new -i -t "${_epistleRecipient}"
+			# TODO
+			# this is exposing a major problem
+			# when we call epistle from mnemon, all the standard _notelosHOME etc are
+			# mucked up...thus all the hoops to get epistle to run
+			# however the above -hardcoded- solution actually works
+			# this thing is a mess
+			# this is fixed now...export only _HOME, which is never set based on
+			# existing _HOME
+		# for germ, we pipe each one as a new germ into designated source
+		elif [[ ${_pushDestination} = "germ" ]]; then
+			read -r -p "$(_ask 'which germ source? ')" _germSource
+			for key in $(ls "${_HOME}/names/${_nameSelected}"); do
+				if [[ -e "${_HOME}/proofs/${key}.txt" ]]; then
+					cat "${_HOME}/proofs/${key}.txt" | tr '\n' ' ' | fold -s -w 66 | "${_BASE}/.bin/germ" add -i -s "${_germSource}"
+				else
+					cat "${_HOME}/transcripts/${key}/${key}.txt" | tr '\n' ' ' | fold -s -w 66 | "${_BASE}/.bin/germ" add -i -s "${_germSource}"
+				fi
+			done
+		else
+			echo "no solution for that yet"
+		fi
+		#TODO think through the push process more
+	}
+
 	_browse() {
+		# the main browser
 		# browse the transcripts
 		# if there aren't any, don't bother
 		[[ $(ls -A ${_HOME}/transcripts/) ]] || { _warn "no transcripts available"; return; }
-		# call the picker function (fzf wrapper)
-		_namePicker _chosen "ls ${_HOME}/catalog" _previewEntry "transcripts" "? for help"
+		# create state
+		[[ ! -d "${_HOME}/state/browser" ]] && mkdir "${_HOME}/state/browser"
+		# clean up state first
+		if [ -n "$(find "${_HOME}/state/browser/group" -mindepth 1 -maxdepth 1)" ]; then
+			# not empty
+			rmdir "${_HOME}/state/browser/group/$(_getCurrentGroup)"
+		fi
+		# set initial group to all
+		mkdir -p "${_HOME}/state/browser/group/all"
+		# call the fzf browser wrapper function
+		_fzfBrowse _chosen "ls ${_HOME}/catalog" _previewEntry "all" "? for help"
+		# the selected key is $_chosen
+		if [[ -z "${_chosen}" ]]; then
+			# nothing selected...carry on
+			true
+		else
+			_debug "TODO offer menu on action on selection list that is: $_chosen"
+		fi
+		# clean up state
+		[ -e $"{_HOME}/state/browser/group/*" ] && rmdir "${_HOME}/state/browser/group/*"
 	}
+
+	_findPhone() {
+		# depends on libimobiledevice
+		if ! hash idevice_id 2>/dev/null; then
+			_error "${FUNCNAME}: idevice_id not found"
+			_warn "install the libimobiledevice tools for iphone direct access"
+			return 1
+		fi
+		if [ -d "${_HOME}/state/iphone/attached" ]; then
+			_info "ATTACHED DEVICE"
+		else
+			_info "no attached device"
+		fi
+		_info "looking for iphone now"
+		_ideviceList=$(idevice_id -l 2>&1)
+		_ideviceListExitCode=$?
+		if [ $_ideviceListExitCode != 0 ]; then
+			# no phone visible, evidently
+			_debug "'idevice_id -l' returned error: ${_ideviceList} ($_ideviceListExitCode)"
+			_error "no iphone visible"
+			[ -d "${_HOME}/state/iphone/attached" ] && rmdir "${_HOME}/state/iphone/attached"
+			mkdir -p "${_HOME}/state/iphone/missing"
+			return 1
+		else
+			_info "we may have a device to attach"
+			_info "found device '$_ideviceList'"
+			mkdir -p "${_HOME}/state/iphone/attached"
+			mkdir -p "${_HOME}/state/iphone/id/${_ideviceList}"
+			mkdir -p "${_HOME}/state/iphone/name/$(idevicename)"
+			_deviceClass=$(ideviceinfo | grep ^DeviceClass | cut -f2 -d' ')
+			mkdir -p "${_HOME}/state/iphone/class/${_deviceClass}"
+			_deviceNumber=$(ideviceinfo | grep ^PhoneNumber)
+			_deviceNumber="${_deviceNumber#*: }"
+			mkdir -p "${_HOME}/state/iphone/number/${_deviceNumber}"
+			mkdir -p "${_HOME}/state/iphone/mount"
+			# now mount ONLY the "mnemon" folder in Firefox
+			# a hacky little way of moving voice memos from the app to an accessible
+			# dir
+			ifuse --documents org.mozilla.ios.Firefox "${_HOME}/state/iphone/mount"
+			if [ $? = 0 ]; then
+				_info "mounted $(idevicename)"
+				mkdir -p "${_HOME}/state/iphone/mounted"
+			else
+				_warn "ifuse mount of $(idevicename) failed"
+			fi
+			return 0
+		fi
+	}
+	_unmountPhone() {
+		fusermount -u "${_HOME}/state/iphone/mount"
+		rmdir "${_HOME}/state/iphone/mounted"
+	}	
 	_import() {
 		# use _finder (from library) to identify directory with media files
 		_dir=$(_finder)
@@ -955,6 +1721,14 @@ _shell() {
 			_path="${_HOME}/queue/${_file}"
 			# get the key
 			_key=${_file%%.*}
+			#
+			# TODO
+			# update the state dir with data
+			# start time
+			# file type
+			# source
+			# file size
+			#
 			# run whisper as a coprocess
 			# suppress_tokens expects a comma separated list of token ids
 			# eg 0=!  ,=11  .=13  ?=30
@@ -974,6 +1748,9 @@ _shell() {
 				mv "${_path}" "${_HOME}/audio/${_file}";
 				rmdir "${_HOME}/state/whisper/transcribing";
 		 		rm -rf "${_HOME}/state/whisper/coproc";	
+				# add the resulting transcripts to git
+  			git -C "${_HOME}" add "${_HOME}/transcripts/${_key}/*"
+  			git -C "${_HOME}" commit -q -m "[whisper] transcripts for ${_key} saved"
 				# make recursive to empty the queue (serially)
 				_checkQueue
 			}
@@ -984,6 +1761,13 @@ _shell() {
 			true
 		fi
 	}
+	# TODO when whisper does not have enough memory it just dies
+	# prints to stderr (or out?) Killed
+	# exits with 137
+	# must catch this and right the boat...currently its a hot mess of failure
+	# this is bash or the kernel sending SIGINT (kill -9) to the whisper process
+	# due to OOM (out of memory) ie linux overcommit coming due
+	# to catch this we might need trap...
 	_getState() {
 		if [[ -e "${_HOME}/state/mic/recording" ]]; then
 			_recordingState="recording"
@@ -1002,6 +1786,16 @@ _shell() {
 			_transcribingState="idle"
 			_transcribing_coprocPID=''
 		fi
+		if [[ -e "${_HOME}/state/iphone/attached" ]]; then
+			_phoneState="attached"
+		else
+			_phoneState="detached"
+		fi
+		if [[ -e "${_HOME}/state/iphone/mounted" ]]; then
+			_mountState="mounted"
+		else
+			_mountState="unmounted"
+		fi
 	}
 	_printScreen() {
 		quenum=$(ls "${_HOME}/queue" | wc -l)
@@ -1010,27 +1804,44 @@ _shell() {
 		audnum=$(ls "${_HOME}/audio" | wc -l)
 		micstate=$(_cStat ${_recordingState})
 		whispstate=$(_cStat ${_transcribingState})
+		mountstate=$(_cStat ${_mountState})
+		iphonestate=$(_cStat ${_phoneState})
+		# iphone may have been unplugged...check if so
+		if [ -z "${iphonestate}" ]; then
+			iphonename=null
+		else
+			if [ -d "${_HOME}/state/iphone/name" ]; then
+				iphonename=$(basename $(find "${_HOME}/state/iphone/name" -mindepth 1 -maxdepth 1 -type d))
+			else
+				iphonename=nono
+			fi
+		fi
 		ffmpegpid=${_recording_ffmpegPID:-none}
 		transpid=${_transcribing_coprocPID:-none}
 		whisppid=${_transcribing_whisperPID:-none}
 		space=$(du -sh "${_HOME}" | awk '{print $1}')
-		clear
+		if [[ ! ${_DEBUG} = "true" ]]; then
+			clear
+		fi
 		printf "=====\033[1mDICTATE MACHINE\033[0m--------Μνήμων--(%s)-------pid:%10d==============o\n" $_NAME $$
 		printf "\n"
-		printf " %-10s %-20s %30s %s\n" "mic state:" $micstate "whisper state:" $whispstate
-		printf "  %-10s %-20s %17s %s\n" "ffmpeg pid:" $ffmpegpid "coproc pid:" $transpid 
-		printf "  %-10s %-20s %17s %s \n" "media:" $(_showFileName)
+		printf " %-4s %-20s %18s %-23s %16s %s\n" 'mic:' $micstate 'whisper:' $whispstate 'iphone:' $iphonestate
+		printf "  %-10s %-12s %7s %-18s %s\n" "ffmpeg pid:" $ffmpegpid "coproc pid:" $transpid $iphonename
+		printf "  %-6s %-48s %s\n" "media:" $(_showFileName) $mountstate
 		printf "  size: %s\n" $(_showFileSize) 
 		printf "\no==============================================================================o\n"
 		printf "  %s(%s)     queue: %s     transcripts: %s    proofed: %s\n" $audnum $space $quenum $transnum $proofnum
 		printf "o------------------------------------------------------------------------------o\n"  
 		printf '
  r) record                          [begins recording from mic]
- a) abort recording                 [deletes current recording]
- s) stop and transcribe             [saves current recording and begins transcription]
- b) browse transcriptions           [browse transcripts for proofing]
- m) move proofs                     [not implemented...push to?]
- i) import audio files              [import audio files]
+ a) abort recording                 [aborts and deletes current recording]
+ s) stop and transcribe             [saves current recording and transcribes]
+ b) browse                          [browse transcripts for proofing]
+ n) name proofs                     [create names and assign proofs into]
+ p) push                            [push group to germ or epistle]
+ i) import                          [import audio files from local filesystem]
+ m) mount  u) unmount               [mount and unmount attached iphone]
+ t) tig                             [inspect repo with tig]
  q) quit
 
   token words recognized: quote, unquote, hash, underscore, dash
@@ -1047,6 +1858,15 @@ _shell() {
 		case ${_selection} in
 			t)
 				_inspect || :
+				;;
+			n)
+				_name || :
+				;;
+			m)
+				_findPhone || :
+				;;
+			u)
+				_unmountPhone || :
 				;;
 			r)
 				# disable screen locking during recording and keep the screen from going
@@ -1072,6 +1892,9 @@ _shell() {
 			b)
 				_browse || :
 				;;
+			p)
+				_push || :
+				;;
 			i)
 				_import || :
 				;;
@@ -1085,11 +1908,13 @@ _shell() {
 						gsettings set org.gnome.desktop.screensaver lock-enabled ${_lockenabled:-false}
 						gsettings set org.gnome.desktop.session idle-delay ${_idledelay:-600}
 					 	return
+						# note this does not terminate the record session...it remains live
+						# and will "reconnect" by restarting mnemon
 					else
 						continue
 					fi
 				else
-					return
+					return 0
 				fi
 				;;
 		esac
