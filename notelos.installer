@@ -4,6 +4,9 @@
 # author: jason@bloom.us
 # desc: installer script for notelos suite
 
+# DEBUG (set to true to see _debug messages)
+_DEBUG=true
+
 # SCRIPT AND SHELL SETTINGS
 set -o errexit
 set -o nounset
@@ -11,21 +14,41 @@ set -o pipefail
 IFS=$'\n\t'
 
 _checkSudo() {
-	# check for sudo privledges (not exhaustive)
-	# return 0 if they seem to exist, otherwise 1
-	# we use timeout to kill sudo -v...then match the return of sudo
-	timeout -k .2 .2 sudo -v > /dev/null 2>&1
-	_error=$?
-	# return of zero indicates we have an active sudo session
-	[[ ${_error} = 0 ]] && return 0
-	# if this produces 1, not in sudoers file
-	[[ ${_error} = 1 ]] && return 1
-	# if this produces 137, in sudoers file but no active session
-	[[ ${_error} = 137 ]] && return 0
-	# if neither matched, assume not and return 1
-	return 1
+	# check for sudo privileges (heuristic, not exhaustive)
+	# return 0 if they seem to exist
+	# return 1 if user has sudo privileges, but inactive session
+	# return 2 if user has no sudo privileges
+	local _sudoReturnCode
+	local _errorCode
+	_debug "checking for sudo privileges"
+	# first try sudo -n with any command...if this returns zero, we are good
+	#sudo -n date >/dev/null 2>&1 && _sudoReturnCode=$? || _sudoReturnCode=$?
+	sudo -n date >/dev/null 2>&1
+	_sudoReturnCode=$?
+	_debug "'sudo -n date' returned ${_sudoReturnCode:-unset}"
+	# if this returns zero, we return 0
+	[ $_sudoReturnCode = 0 ] && return 0
+	_warn "no active sudo session detected"
+	_debug "testing for sudoers privileges"
+	# next use sudo -v, which returns 1 if user is not a valid sudoer
+	# we use timeout to kill sudo -v...then capture the timeout return code
+	timeout --foreground -k .2 .2 sudo -S -v > /dev/null 2>&1
+	_errorCode=$?
+	# now match timeout exit code accordingly
+	if [[ $_errorCode = 1 ]]; then
+		# sudo returned 1, ie user is not in sudoers file
+		_warn "user has no sudo privileges"
+		return 1
+	elif [[ $_errorCode = 124 ]]; then
+		# user is in sudoers file (but session is inactive)
+		_warn "user has sudo privileges; however session is inactive"
+		return 0
+	else
+		# so other error
+		_warn "unexpected error; 'timeout -k .1 .1 sudo -S -v' returned $_errorCode"
+		return 1
+	fi
 }
-
 
 _checkExternals() {
 	_required=(git fzf vim)
@@ -36,7 +59,7 @@ _checkExternals() {
 	_temp=$(mktemp -d)
 	for _required in "${_required[@]}"; do
 		if command -v ${_required} &>/dev/null; then
-			_info "${_required} found"
+			_debug "${_required} found"
 		else
 			_warn "${_required} not found and is required"
 			_ask "install ${_required} ? [y/n] "
@@ -49,7 +72,7 @@ _checkExternals() {
 	done
 	for _recommended in "${_recommended[@]}"; do
 		if command -v ${_recommended} &>/dev/null; then
-			_info "${_recommended} found"
+			_debug "${_recommended} found"
 		else
 			_warn "${_recommended} not found and is recommended"
 			_ask "install ${_recommended} ? [y/n] "
@@ -183,7 +206,7 @@ _error() {
 	printf "\033[38;5;9mERROR\033[0m %s\n" "$1"
 }
 _debug() {
-	printf "\033[38;5;6mDEBUG\033[0m %s\n" "$1"
+	[ ${_DEBUG:-false} = "false" ] || printf "\033[38;5;6mDEBUG\033[0m %s\n" "$1"
 }
 
 ####################################
@@ -553,13 +576,16 @@ _install() {
 
 _upgrade() {
 	_checkInstalled || { _error "no pre-existing installation found"; exit 1; }
-	_warn "found $(cat ${_notelosHOME}/.git/description) already"
+	_warn "found $(cat ${_notelosHOME}/.git/description)"
 	# put the binary files in place
 	for _file in $(ls "${_notelosLAB}/bin"); do
 		_installFile "${_notelosLAB}/bin/${_file}" "${_notelosBIN}/${_file}"
-		_debug "installed ${_file}"
 	done
-	_debug "upgrade succeeded"
+	# now do the config files
+	for _configFile in $(ls "${_notelosLAB}/config"); do
+		_installFile "${_notelosLAB}/config/${_configFile}" "${_notelosHOME}/.config/${_configFile}"
+	done
+	_info "upgrade succeeded"
 	exit
 }
 
@@ -640,13 +666,12 @@ main() {
 	# setup the environment after processing all command line parameters
 	_setEnv
 	# check for sudo priveledges
-	#_checkSudo || _warn "sudo priveledges will be required to run fully"
-	_checkSudo >/dev/null 2>&1 || _warn "sudo priveledges will be required to run fully"
+	_checkSudo && _info "sudo looks good" || _warn "sudo permissions will be needed"
 	# check for external requirements
 	_checkExternals
-	#_debug "full command is '${_selfNAME} ${_fullCommand}'"
-	#_debug "subcommand is '${_subCommand:-nosubcommand}'"
-	#_debug "full subcommand is '${_subCommandParams}'"
+	_debug "full command is '${_selfNAME} ${_fullCommand}'"
+	_debug "subcommand is '${_subCommand:-nosubcommand}'"
+	_debug "full subcommand is '${_subCommandParams}'"
 	# run the desired command (run install if none specified)
 	[ -z "${_subCommand:-}" ] && _install
 	[ -n "${_subCommand:-}" ] && eval _"${_subCommand}" || exit
