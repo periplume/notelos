@@ -180,7 +180,7 @@ _getOpts () {
 
 _setEnv() {
   # set (and print) the environment details
-  _info "setting up environment now"
+  _debug "setting up environment now"
   # determine stdin/stdout/stderr particulars
 	[[ -t 0 ]] && _notelosSTDIN=term || _notelosSTDIN=pipe
   [[ -t 1 ]] && _notelosSTDOUT=term || _notelosSTDOUT=pipe
@@ -198,7 +198,7 @@ _setEnv() {
 	_isTerminalDARK && _notelosTERMMODE=dark || _notelosTERMMODE=light
 	_debug "terminal theme appears to be '$_notelosTERMMODE'" 
 	_debug "terminal size (width:height) is '$(_getTERMDIMENSIONS)'"
-	[[ $COLUMNS -lt 100 || $LINES -lt 24 ]] && _warn "terminal size deficiency; 80x24 is min, width > 100 recommended"
+	[[ $COLUMNS -lt 100 || $LINES -lt 24 ]] && _warn "terminal size deficiency ($(_getTERMDIMENSIONS); min:80x24, best:>100w)"
 	# determine shell details
   _debug "shell (\$SHELL) is '${SHELL}'"
 	_debug "bash version (\$BASH_VERSION) is '$BASH_VERSION"
@@ -295,11 +295,19 @@ _getSession() {
 	if [[ -d "${_notelosHOME}/.state/session" ]]; then
 		# session is active
 		_warn "session under pid $(cat ${_notelosHOME}/.state/session/session.pid) is active"
-		return 1
-		# ask notify the session?
-		# send 
-		# echo -ne "\n\e[00;33;06mALERT\e[0m" > /dev/pts/2
-		# to the active pts that an attempt to run concurrently occured
+		read -rsn1 -p "$(_ask 'override state lock? [y/n] ')" _yn
+		echo
+		if [[ ${_yn} != "y" ]]; then
+			_warn "session lock remains, goodbye"
+			return 1
+		else
+			# calculate the session duration
+			_session_begin=$(cat ${_notelosHOME}/.state/session/session.start)
+			_session_end=$(date +%s)
+			_session_duration=$((_session_end - _session_begin))
+			# close session
+			mv "${_notelosHOME}/.state/session" "${_notelosHOME}/.state/session.${_session_end}"
+		fi
 	fi
 	mkdir "${_notelosHOME}/.state/session" 2>/dev/null || { _error "could not make session dir"; return 1; }
 	echo $$ > "${_notelosHOME}/.state/session/session.pid"
@@ -330,11 +338,34 @@ _trapExit() {
 	# TODO
 	# do a backup if dsink is mounted
 	# then unmount dsink
+	# kill the changemonitor
+	monitorPID=$(basename "${_notelosHOME}/.dsink/state/changemonitorPID"/*)
+	if ! kill -0 "${monitorPID}" 2>/dev/null; then
+		# not running...clear state PID file
+		_warn "changemonitor (${monitorPID}) is not running...removing pid file"
+		rm "${_notelosHOME}/.dsink/state/changemonitorPID"/*
+	else
+		# pid is still running
+		_debug "changemonitor is running as ${monitorPID}; killing now"
+		kill ${monitorPID} || touch "${_notelosHOME}/.dsink/state/changemonitorFAIL"
+		rm "${_notelosHOME}/.dsink/state/changemonitorPID"/*
+	fi
 }
 
 ###############
 ###### SHELL
 ###############
+
+# TODO problem with changemonitor...when i launch mnemon, then browse, the
+# changemonitor pid dies...and i don't know why...
+# turns out i made the function recursive incorrectly...i put it in the while
+# loop, but it needed to go after (in mnemon, changemonitor
+
+_childMonitor() {
+	local pid=$1
+	local status=$2
+	echo "child $pid exited with status $status"
+}
 
 _shell() {
 	# change the command history file
@@ -351,6 +382,45 @@ _shell() {
 	trap _trapExit EXIT 
 	# start session
 	_getSession || { _error "could not obtain exclusive session"; return 1; }
+	# start the dsink changemonitor...which updates .dsink/state with a rough
+	# count of the number of changes since the session opened
+	# make sure the monitor pid dir exists first
+	_monitorPID="${_notelosHOME}/.dsink/state/changemonitorPID"
+  [ ! -d "${_monitorPID}" ] && mkdir -p "${_monitorPID}"
+	# first make sure its not already running
+  # make sure not to run multiple instances of the monitor
+  [ -f "${_monitorPID}"/* ] && kill $(basename "${_monitorPID}"/*) && _warn "killed changemonitor"
+	# set up a trap to monitor the child pid
+	###trap '_childMonitor $pid $?' SIGCHLD
+	# now start up the monitor
+	"${_notelosHOME}"/.bin/dsink changemonitor -p "${_notelosHOME}" &
+	# get its pid
+	pid=$!
+	# make sure the pid dir is empty
+	[ -f "${_monitorPID}"/* ] && rm "${_monitorPID}"/*
+	# finally register the monitor pid into state dir
+	touch "${_monitorPID}/$pid"
+	_debug "notelos started changemonitor as pid $pid"
+	# now start the dsinkmonitor (monitors mount point)
+
+
+	# TODO we need to collect a list of PIDs that must be killed when the session
+	# closes
+	# TODO
+	# this is where the rsync agent should be inserted
+	# design: backup should be run when a session opens to check
+	# if a dsink device is available
+	#   if it is up to date
+	# if there is a mounted phone
+	#   if there is a backup package (tar) uploaded onto the phone
+	# what the whole backup status is
+	# dsink devices
+	#   whether they are stale and if so how stale
+	# use rsync --dry-run
+	# rsync --exclude .dsink/mount/ -a /home/jason/notelos \
+	# /home/jason/notelos/.dsink/mount/rsync --dry-run --verbose -i --stats | \
+	# grep ^
+
 	local _p			#prompt
 	_capDETECT() {
 		# check if CAPS LOCK is on
@@ -359,6 +429,7 @@ _shell() {
 	}
 
 	_termSET() {
+		_debug "termset will now update the color scheme"
 		# 1. check if dark or light
 		_isTerminalDARK && _mode=dark || _mode=light
 		if [ ${_mode} = "dark" ]; then
@@ -539,7 +610,7 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 	while read -rsn1 -p "$(_p)" __input || true; do
 	echo
 	# uncomment this to see the actual input key char, plus the dec and hex
-	printf "read key: '%c' '%d' 0x%02x\n" "${__input}" "'${__input}" "'${__input}"
+	#printf "read key: '%c' '%d' 0x%02x\n" "${__input}" "'${__input}" "'${__input}"
 		case ${__input} in
 			\?)
 				_printShellUsage
@@ -584,6 +655,11 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 				;;
 			r)
 				printf '\e[?5h'; sleep 0.2 ; printf '\e[?5l'
+				_warn "do it"
+				sleep 1
+				printf '\e[?5h'; sleep 0.1 ; printf '\e[?5l'
+				sleep 0.5
+				printf '\e[?5h'; sleep 0.1 ; printf '\e[?5l'
 				resume || :
 				;;
 			s)
@@ -739,8 +815,8 @@ WARNING: this is a prototype and therefore likely broken in unpredictable ways
 								;;
 							"Q")
 								# secret emergency quit key combo
-								_warn "alt-Q triggered...quitting"
-								exit 1
+								_warn "alt-Q triggered...secret quit"
+								exit 3
 								;;
 							*)
 								echo "escape sequence read ($_escKey)"

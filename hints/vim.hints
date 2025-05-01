@@ -64,3 +64,7 @@ xp transpose current char with next
 insert greek characters
 ctrl-v uXXXX (where 03B1 is alpha)
 
+insert italian with accents
+ctrl-k e' renders é
+ctrl-k i` renders ì (the back tick renders the back accent) 
+

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# file: germ
+# file: template
 # source: https://github.com/periplume/notelos.git
 # author: jason@bloom.us
-# description: note taking tool
+# description: module template
 
 # STRICT SHELL
 set -o errexit 
@@ -23,7 +23,6 @@ _requiredCommands=(git tig fzf)
 
 # source library commands and set up log/console
 # use the library file from the same directory if possible
-# otherwise, source it from the path
 [[ -e "$(dirname $0)/notelos-lib.sh" ]] \
 	&& source "$(dirname $0)/notelos-lib.sh" \
 	|| source notelos-lib.sh
@@ -60,7 +59,6 @@ options:
  -s      suppress all stdout/stderr
  -v      print version number and exit
  -x      force standalone mode
- -t      tui (experimental)
 
 alternate env settings:
  -a <name>  set the germ dir name to <name>
@@ -80,7 +78,6 @@ _printCommands() {
  search              interactive search
  browse              read through the current source entities
  source              add and manipulate source
- pdf                 produce a pdf from notebook
 EOF
 }
 
@@ -109,13 +106,13 @@ _getOpts () {
     done
     [[ ${_allowed} = "true" ]] || return 1
   }
-	while getopts ":hsdlxtva:p:" flag ; do
+	while getopts ":hsdlxva:p:" flag ; do
 		case ${flag} in 
 			h)
 				_printInfo; _printUsage; exit 0
 				;;
 			a)
-				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is    NOT a flag ($OPTARG)"; exit 1; }
+				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
 				_isCommand "${OPTARG}" || { _error "'${OPTARG}' is not allowed (it is a command)"; exit 1; }
 				_NAME=${OPTARG}
 				_warn "using alt name '${_NAME}'"
@@ -141,10 +138,6 @@ _getOpts () {
         _debug "${FUNCNAME[0]}: running in standalone mode with -$flag"
         _MODE=standalone
         ;;
-			t)
-				_debug "${FUNCNAME[0]}: running experimental TUI mode"
-				_TUI=true
-				;;
 			v)
 				_info "${green}verion${reset}: beta"; exit 0
 				;;
@@ -164,7 +157,7 @@ _getOpts () {
 				;;
 			add)
 				_subCommand=$1; shift
-				while getopts ":ibs:" flag; do
+				while getopts ":ib" flag; do
 					case ${flag} in
 						i)
 							# inline add (no editor invoked)
@@ -178,11 +171,6 @@ _getOpts () {
 							# without commiting each one...behavior is not correct imo
 							_debug "bulk add operation"
 							_bulk=true
-							;;
-						s)
-							# specify the source notebook for the add
-							_debug "source specified '${OPTARG}'"
-							_addTO="${OPTARG}"
 							;;
 						?)
 				 			_error "${FUNCNAME}: unknown flag -${OPTARG}"; exit 1
@@ -208,10 +196,6 @@ _getOpts () {
 				return
 				;;
 			source)
-				_subCommand=$1
-				return
-				;;
-			pdf)
 				_subCommand=$1
 				return
 				;;
@@ -248,7 +232,6 @@ _setEnv() {
 		_LOG=${_notelosLOG}
 		_SILENT=${_notelosSILENT}
 		_USERNAME=${_notelosUSERNAME}
-		_USERFULLNAME=${_notelosUSERFULLNAME}
 		_USEREMAIL=${_notelosUSEREMAIL}
 		_EDITOR=_notelosEdit
 	else
@@ -264,7 +247,6 @@ _setEnv() {
 		_LOG=${_LOG:-false}
 		_SILENT=${_SILENT:-false}
 		_USERNAME=$(whoami)
-		_USERFULLNAME="unknown"
 		_USEREMAIL="unknown"
 		_EDITOR=${EDITOR:-nano}
 	fi
@@ -275,7 +257,6 @@ _setEnv() {
 	_debug "$(declare -p _BASE)"
 	_debug "$(declare -p _HOME)"
 	_debug "$(declare -p _USERNAME)"
-	_debug "$(declare -p _USERFULLNAME)"
 	_debug "$(declare -p _USEREMAIL)"
 	_debug "$(declare -p _GITDIR)"
 	_debug "$(declare -p _LOGFILE)"
@@ -283,8 +264,19 @@ _setEnv() {
 	_debug "$(declare -p _SILENT)"
 	_debug "$(declare -p _LOG)"
 	_debug "$(declare -p _LOGGING)"
+	export _MODE
+	export _MASTER
+	export _NAME
+	export _BASE
 	export _HOME
+	export _USERNAME
+	export _USEREMAIL
 	export _GITDIR
+	export _LOGFILE
+	export _DEBUG
+	export _SILENT
+	export _LOG
+	export _LOGGING
 }
 
 _checkExternalTools() {
@@ -316,16 +308,9 @@ _checkHome() {
     if [ -f "${_git_desc}" ]; then
       # the git description file exists, lets check it for our marker
       read -r _desc < "${_git_desc}"
-			if [[ ${_desc} == ${_MASTER}:${_NAME}:${_USERNAME}* ]]; then
+      if [[ ${_desc} = "${_MASTER}:${_dirName}" ]]; then
         # if repo does exist, return 0
         _debug "${_git_desc} = ${_desc}"
-				# check and create sets directory if it doesn't exist
-        if [[ ! -d "${_HOME}/.sets" ]]; then
-          mkdir "${_HOME}/.sets"
-          git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/.sets"
-          git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[sets] initialize notebook sets directory"
-          _debug "created sets directory at ${_HOME}/.sets"
-        fi
 				return
       else
         # if repo does not exist, warn and exit
@@ -359,22 +344,15 @@ _create() {
 	git init -q -b main "${_HOME}"
   git -C "${_HOME}" config user.name "${_USERNAME}"
   git -C "${_HOME}" config user.email "${_USEREMAIL}"
-	# create sets directory
-  mkdir "${_HOME}/.sets"
-	# make the default notebook (aka "source")
+	echo "${_MASTER}:${_NAME}" > "${_GITDIR}/description"
 	mkdir "${_HOME}/default"
 	echo "default source (notebook, project, etc)" > "${_HOME}/default/.description"
-	git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/.sets"
 	echo "default" > "${_HOME}/.current"
 	echo ".current" > "${_HOME}/.gitignore"
 	echo ".${_NAME}_history" >> "${_HOME}/.gitignore"
   git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
   git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/default/.description" 
   git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
-	# put the installed signature in git description file
-  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
-  _time=$(date +%s)
-  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" >      "${_HOME}/.git/description"
 }
 
 ##################################
@@ -382,7 +360,7 @@ _create() {
 ##################################
 
 _inspect() {
-	tig -C ${_GITDIR}
+	tig -C${_GITDIR}
 }
 
 ##################################
@@ -392,20 +370,12 @@ _inspect() {
 _add() {
 	# add a new entry
 	local _currentSource=$(_getSource)
-	local _commitMsg
-	# determine if the source notebook has been declared in positional parameters
-	if [[ -z ${_addTO:-} ]]; then
-		# it was not specified, therefore use "current"
-		_useSource=${_currentSource}
-	else
-		_useSource=${_addTO}
-	fi
-	# determine the destination for the file to write
-	local _dir="${_HOME}/${_useSource}"
+	local _dir="${_HOME}/${_currentSource}"
 	local _key=$(_getNewKey)
 	local _file="${_dir}/${_key}"
-	# check for piped standard input
+	local _commitMsg
 	if [ ${_inline:-null} = "true" ]; then
+		# check for piped standard input
 		# note that pipe input takes priority over message appended to 'add -i'
 		if [ -p /dev/stdin ]; then
 			cat < /dev/stdin > "${_file}"
@@ -414,15 +384,12 @@ _add() {
 			echo "$(_trimString ${_inlineString})" > "${_file}"
 		fi
 	else
-		# catch pipe in without -i
 		[ -p /dev/stdin ] && { _error "use 'add -i' for pipe input"; return 1; }
-		# maybe we don't need the -i?
-		# now just use the editor as usual
 		${_EDITOR} "${_file}"
 	fi
 	[[ -e "${_file}" ]] || return
 	_commitMsg=$(_buildCommitMsg "$(cat "${_file}")")
-	_doCommit "${_useSource}/${_key}" "[add to ${_useSource}] ${_commitMsg}"
+	_doCommit "${_currentSource}/${_key}" "[add to ${_currentSource}] ${_commitMsg}"
 }
 
 _trimString() {
@@ -523,14 +490,12 @@ _getSource() {
 	! _isSourceSet && { echo "default"; return; }
 	cat "${_HOME}/.current"
 }
-export -f _getSource
 
 _isSourceSet() {
 	# return 0 if true
 	# return 1 if false
 	[[ -e "${_HOME}/.current" ]]
 }
-export -f _isSourceSet
 
 _doesSourceExist() {
 	# return 0 if true (yes)
@@ -547,7 +512,6 @@ _setSource() {
 	_isSourceSet && echo "${1}" > "${_HOME}/.current"
 	export _currentSource=${1}
 }
-export -f _setSource
 
 _saveSource() {
 	# arg 1 = source name
@@ -575,18 +539,9 @@ _getSourceCount() {
 }
 export -f _getSourceCount
 
-_browseSources () {
-  # Use _fzfBrowser to browse sources
-  _fzfBrowser _sourcename _getSourceList _validateName "source" "select new source"
-}
-
-_validateName(){
-	# $1 name type (source, index, set)
-	# currently, all three have the same rules, but the display differs
-	# function used within fzf preview window to assist in the selection of names
-	# TODO note: $1 is the query, $2 is the selection, when in fzf, therefore, passing the "name type"
-	# does not work as soon as any typing occurs
-	local _nameType=${1:-"source"}
+_validateSourceName(){
+	# function used within fzf preview window to assist in the selection of a
+	# source name
 	local _maxLength=25
 	local _minLength=1
 	local _newSourceName
@@ -632,7 +587,6 @@ _validateName(){
 	printf "first ['%s'] allowed: %23s\n" "${1:0:1}" "$(_cStat "${lead}")"
 	printf "last ['%s'] allowed: %24s\n" "${1:(-1)}" "$(_cStat "${last}")"
 	printf "no non-alpha/num repeats: %18s\n" "$(_cStat "${repeat}")"
-	echo
 	echo "-----------RULES------------------"
 	echo "the name must be unique"
 	echo "max length is ${_maxLength}, min is ${_minLength}"
@@ -643,507 +597,63 @@ _validateName(){
 	echo " - dot (.)"
 	echo " ^ these cannot be first or last"
 	echo " ^ cannot be repeated (eg --)"
-	echo arg1=$1
-	echo arg2=$2
 	echo
-	if [[ "${_nameType}" == "source" ]]; then
-		echo "------SELECTED SOURCE CONTENTS-----------"
-		[[ -z "${2}" ]] && echo "free" || tree -Ca "${_HOME}/${2}"
-	elif [[ "${_nameType}" == "index" ]]; then
-		echo "------SELECTED INDEX CONTENTS-----------"
-		[[ -z "${2}" ]] && echo "free" || tree -C "${_HOME}/${_currentSource}/.index/${2}"
-	elif [[ "${_nameType}" == "set" ]]; then
-		echo "------SELECTED SET CONTENTS-----------"
-		[[ -z "${2}" ]] && echo "free" || tree -C "${_HOME}/.sets/${2}"
-	fi
+	echo "------SELECTED SOURCE DESCRIPTION-----------"
+	[[ -z "${2}" ]] && echo "free" || cat "${_HOME}/${2}/.description"
 }
 # export above function to fzf for --preview
-export -f _validateName
+export -f _validateSourceName
 
-# source set functions
-_createSet() {
-  # Create a new set or select an existing one
-  local _setName
-  _fzfBrowser _setName _listSets _validateSetName "set" "create or select set"
-
-  # abort if fzf returns null
-  [[ ${_setName} = ":" ]] && { _warn "set creation aborted"; return; }
- 
-  # fzfBrowser returns "query:selection", so trim to selection only
-  _setName=${_setName#*:}
-  
-  # Validate the selected or entered set name
-  if ! _isSourceNameValid "${_setName}"; then
-    _warn "invalid set name: '${_setName}'"
-    return 1
-  fi
-  
-  # Create the new set directory if it doesn't exist
-  local _setPath="${_HOME}/.sets/${_setName}"
-  if [[ ! -d "${_setPath}" ]]; then
-    mkdir -p "${_setPath}"
-    _info "set '${_setName}' created successfully"
-		# these failed because _GITDIR isn't exported
-    #git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_setPath}"
-    #git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[sets] created set '${_setName}'"
-  else
-    _warn "set '${_setName}' already exists"
-  fi
-    
-  # Set the current set
-  export _currentSet="${_setName}"
-  export _setViewMode=true
-}
-export -f _createSet
-
-_validateSetName() {
-  # Validate a set name (reuse source name validation logic)
-  _validateName "set"
-}
-export -f _validateSetName
-
-_listSets() {
-  # List all sets
-  if [[ -d "${_HOME}/.sets" ]]; then
-    find "${_HOME}/.sets" -mindepth 1 -maxdepth 1 -type d -exec basename {} \;
-  fi
-}
-export -f _listSets
-
-# new unified fzf browser function for individual notebooks
-_fzfBrowser () {
-	# all germ notebook functions call this function
-	# the following arguments set the initial context
+# usage:
+# _namePicker _newName   _getSourceList _validateNamePreview "prompt"    "special notes"
+# (function)  (nameref)     (fzf feed)      (fzf preview)     fxf prompt  (fzf header)    
+_namePicker () {
 	# $1 = nameref for return value
 	# $2 = input function (prints the list of existing whatever)
 	# $3 = validation function for fzf preview window (in which $1=query $2=selection)
-	# $4 = initial prompt string or function
+	# $4 = prompt string
 	# $5 = optional special instructions
+	# basically an fzf wrapper for name selection to be used globally
+	# single level only and single selection
 	local -n _return=$1
 	local _input=$2
 	local _preview=$3
-	export _prompt=$4
+	local _prompt=$4
 	export _instructions="${5:-existing above, guidance right >}"
-
-	_toggleShowAll() {
-		# Toggle the _showAll state
-		if [[ "${_showAll:-false}" == "true" ]]; then
-			_showAll=false
-			_debug "showAll is false"
-		else
-			_showAll=true
-			_debug "showAll is true"
-		fi
-		export _showAll
-	}
-	export -f _toggleShowAll
-
-	# function to toggle search order
-	_toggleSearchOrder() {
-		# check the FZF_PROMPT string
-		# SOURCE^> indicates reverse order
-		# SOURCE> indicates normal order
-		# print the opposite of what is found in FZF_PROMPT
-	  if [[ "${FZF_PROMPT}" =~ ^[[:alnum:]._-]+(\[[[:alnum:]._-]+\])?\^\>(\ ?)$ ]]; then
-			# reverse order
-			echo "${FZF_PROMPT//\^>/}>"
-		else
-			# normal order
-			echo "${FZF_PROMPT//>/^>}"
-		fi
-	}	
-	export -f _toggleSearchOrder
-
-	# function to determine search order
-	_isSearchReversed() {
-		# check the FZF_PROMPT string
-		# SOURCE^> indicates reverse order
-		# SOURCE> indicates normal order
-	  if [[ "${FZF_PROMPT}" =~ ^[[:alnum:]._-]+(\[[[:alnum:]._-]+\])?\^\>(\ ?)$ ]]; then
-			return 
-		else
-			return 1
-		fi
-	}
-	export -f _isSearchReversed
-
-	_setPrompt() {
-  	# Set the FZF prompt dynamically based on the current source and index
-  	local _currentSource=$(_getSource) # Get the current source
-  	local _indexFile="${_HOME}/${_currentSource}/.current" # Path to the .current file
-		local _existingPrompt="${FZF_PROMPT}"
-  	local _newPrompt
-
-		# check if the prompt is already set
-		if [[ "${_existingPrompt:-}" =~ ^.*\>\ ?$ ]]; then
-		#if [[ "${_existingPrompt:-}" = "> " ]]; then
-			# FZF_PROMPT is not set, use the provided string or function
-			# check if $_prompt is a function name
- 	 		if ! declare -F "$_prompt" >/dev/null; then
-				# if not, use the string provided, and return
-				_newPrompt="${_prompt}"
-				echo "${_newPrompt}>"
-				return
-			else
-				# prompt is already set, set the base from it
-				_newPrompt="${_currentSource}"
-			fi
-		fi
-
-  	# Append the current index to the prompt if it exists
-  	if [[ -f "${_indexFile}" ]]; then
-    	local _currentIndex
-    	_currentIndex=$(cat "${_indexFile}")
-    	_newPrompt="${_newPrompt}[${_currentIndex}]"
-  	else
-    	_newPrompt="${_newPrompt}"
-  	fi
-
-		echo "${_newPrompt}>" # Output the prompt string with a space
-	}
-	export -f _setPrompt
-
-	# helper functions for fzf transformations
 	_transHeader() {
 		# add a second line to the header with context-specific info in yellow
-		# $1 = string message to insert (as yellow text within brackets)
-		# if -z $1, transform to original header
-		[[ -z "${1:-}" ]] && { printf "${_instructions}"; return; }
-		# otherwise, print the instructions with the new message
+		# $1 string message to insert
 		printf "%s\n[\033[38;5;11m%s\033[0m]" "${_instructions}" "${1}"
 	}
 	export -f _transHeader
-
-	# preview help window	
-	_showHelp() {
-		printf '
- +-------------------------+---------------------------------+
- |       germ help         |     hit "/" to close help       |
- +-------------------------+---------------------------------+
-
- main navigation
- - alt-P   page up         - alt-H   half page up
- - alt-p   page down       - alt-h   half page down
-
- preview navigation
- - ctrl-[up|down] arrow scrolls the preview window
- - ctrl-j previews the json output (txt is default)
-
- search order (SOURCE^> = reverse)
- - alt-r  toggle search order 
-
- source management
- - ctrl-s  create a new source or select an existing one
-
- create index in current source
- - alt-i   create a new index
- - alt-u   read the notebook without index
-
- index management for notebooks
- - alt-a   append selected to current index
-
- set management for sources
- - alt-s   create a new set or select an existing one
-
-'
-	}
-	# export functions to fzf (child)
-	export -f _showHelp
-
-	# run the fzf loop, building the fzf command with an array
 	while true; do
-		# basic fzf defaults
-		FZF_COMMAND=()
-		FZF_COMMAND+=(--multi)				# limits to single selection
-		FZF_COMMAND+=(--no-mouse)				# prevents mouse interaction
-		FZF_COMMAND+=(--ansi)						# enables ansi color code processing
-		FZF_COMMAND+=(--print-query)		# prints the query term as the first line
-		FZF_COMMAND+=(--exact)					# enables exact-match
-		FZF_COMMAND+=(--info-command='echo -e "\x1b[33;1m$FZF_POS\x1b[m/$FZF_INFO ($FZF_KEY:$FZF_ACTION)"')
-
-		# prompt and instructions and initial list input
-		FZF_COMMAND+=(--header="${_instructions}")			# sets the instruction line
-		FZF_COMMAND+=(--bind="start:reload(${_input})")	# loads using given _input function ($2)
-		FZF_COMMAND+=(--bind="start:+transform-prompt(_setPrompt)")	# sets prompt
-
-		# catch common keys and notify accordingly
-		FZF_COMMAND+=(--bind="ctrl-c:transform-header(_transHeader 'ESC to abort')")
-		FZF_COMMAND+=(--bind="ctrl-q:transform-header(_transHeader 'ESC to abort')")
-		FZF_COMMAND+=(--bind="ctrl-z:transform-header(_transHeader 'no ctrl-z')")
-		FZF_COMMAND+=(--bind="backward-eof:transform-header(_transHeader 'ESC to abort')")
-		
-		# key bindings for index creation
-		FZF_COMMAND+=(--bind="alt-i:execute(_createIndex)")
-		FZF_COMMAND+=(--bind="alt-i:+transform-prompt(_setPrompt)")
-		FZF_COMMAND+=(--bind="alt-i:+reload(${_input})")
-		FZF_COMMAND+=(--bind="alt-u:execute(_readRaw)")
-		FZF_COMMAND+=(--bind="alt-u:+transform-prompt(_setPrompt)")
-		FZF_COMMAND+=(--bind="alt-u:+reload(${_input})")
-
-		# add selected file to index (simple append)
-		FZF_COMMAND+=(--bind="alt-a:execute(_addToIndex {})")
-		FZF_COMMAND+=(--bind="alt-a:+reload(${_input})")
-		# remove selected file from index (and renumber)
-		FZF_COMMAND+=(--bind="alt-D:execute(_removeFromIndex {})")
-		FZF_COMMAND+=(--bind="alt-D:+reload(${_input})")
-		# toggle between showing all files and only files without symbolic links
-		FZF_COMMAND+=(--bind="alt-t:execute(_toggleShowAll)")
-		FZF_COMMAND+=(--bind="alt-t:+reload(${_input})")
-
-		# set management
-		FZF_COMMAND+=(--bind="alt-s:become(_createSet)")
-
-		# the exit / abort command is ESC
-		FZF_COMMAND+=(--bind="esc:abort")
-
-		# main help (toggles preview and disables ESC)
-		FZF_COMMAND+=(--bind="?:change-preview(_showHelp)")
-		FZF_COMMAND+=(--bind="?:+unbind(esc)")
-		FZF_COMMAND+=(--bind="?:+transform-header(_transHeader 'hit / to close help')")
-		FZF_COMMAND+=(--bind="/:change-preview(${_preview} {q} {})")
-		FZF_COMMAND+=(--bind="/:+rebind(esc)")
-		FZF_COMMAND+=(--bind="/:+transform-header(_transHeader)")
-
-		# the preview window
-		FZF_COMMAND+=(--preview="${_preview} {q} {}")
-		FZF_COMMAND+=(--preview-window=75%,wrap)
-
-		# reverse the order of the list
-		FZF_COMMAND+=(--bind="alt-r:transform-prompt(_toggleSearchOrder)")
-		FZF_COMMAND+=(--bind="alt-r:+reload(${_input})")
-
-		# navigation shortcuts
-		FZF_COMMAND+=(--bind="alt-P:page-up")
-		FZF_COMMAND+=(--bind="alt-p:page-down")
-		FZF_COMMAND+=(--bind="alt-H:half-page-up")
-		FZF_COMMAND+=(--bind="alt-h:half-page-down")
-	
-		# assign the fzf results to _selection (what was "selected")
-		_FZF_selection=$(fzf "${FZF_COMMAND[@]}")
-
-		# split out the query string into $query
-		query=$(echo "${_FZF_selection}" | head -n1)
-
-		# assign the selection to $selection (note no MULTI SELECT yet)
-		selection=$(echo "${_FZF_selection}" | tail -n1)
-		_debug "query is '${query}'"
-		_debug "selection is '${selection}'"
-
-		# finally, return the two values into the nameref _return
+		_newName=$(fzf \
+			--no-multi \
+			--no-mouse \
+			--ansi \
+			--print-query \
+			--exact \
+			--info="hidden" \
+			--prompt="${_prompt}>" \
+			--header="${_instructions}" \
+			--bind="start:reload(${_input})" \
+			--bind="ctrl-c:transform-header(_transHeader 'ESC to abort')" \
+			--bind="ctrl-q:transform-header(_transHeader 'ESC to abort')" \
+			--bind="ctrl-z:transform-header(_transHeader 'no ctrl-z')" \
+			--bind="backward-eof:transform-header(_transHeader 'ESC to abort')" \
+			--bind="tab:replace-query+first" \
+			--bind="esc:abort" \
+			--preview="${_preview} {q} {}" \
+			--preview-window=60%,wrap
+		);
+		query=$(echo "${_newName}" | head -n1)
+		selection=$(echo "${_newName}" | tail -n1)
+		#_debug "query is '${query}'"
+		#_debug "selection is '${selection}'"
 		_return="${query}:${selection}"
 		break
 	done
 }
-export -f _fzfBrowser
-
-_listEntities () {
-	# generate an index-aware list for fzf
-  local _currentSource=$(_getSource)
-	local _sourceDir="${_HOME}/${_currentSource}"
-	local _currentIndex="${_HOME}/${_currentSource}/.current"
-  local _indexedFiles=()
-  local _nonIndexedFiles=()
-
-	# check for the current index
-	if [ -f "${_currentIndex}" ]; then
-		local _currentIndexName=$(cat "${_currentIndex}")
-		local _currentIndexDir="${_HOME}/${_currentSource}/.index/${_currentIndexName}"
-	fi
-
-	# Ensure the active index directory exists
-	if [[ -d "${_currentIndexDir}" ]]; then
-		# Read the symbolic links in the active index directory
-		while IFS= read -r -d '' link; do
-			local _linkName=$(basename "${link}")
-			local _originalFile=$(readlink "${link}")
-			#_indexedFiles+=("${_linkName} -> $(basename "${_originalFile}")")
-			_indexedFiles+=(".index/${_currentIndexName}/${_linkName}")
-		done < <(find "${_currentIndexDir}" -mindepth 1 -maxdepth 1 -type l -print0)
-	fi
-
-	# Get the list of non-indexed files
-	local _allFiles
-	_allFiles=$(ls "${_HOME}/${_currentSource}")
-	for _file in ${_allFiles}; do
-		# Check if the file is already indexed
-		if [[ ! " ${_indexedFiles[*]} " =~ " ${_file} " ]]; then
-			_nonIndexedFiles+=("${_file}")
-		fi
-	done
-
-  # Sort the files based on the current order
-  if _isSearchReversed; then
-    _indexedFiles=($(printf '%s\n' "${_indexedFiles[@]}" | sort -nr))
-    _nonIndexedFiles=($(printf '%s\n' "${_nonIndexedFiles[@]}" | sort -nr))
-  else
-    _indexedFiles=($(printf '%s\n' "${_indexedFiles[@]}" | sort -n))
-    _nonIndexedFiles=($(printf '%s\n' "${_nonIndexedFiles[@]}" | sort -n))
-  fi
-
-	# Output the combined list: indexed files first, then non-indexed files
-	for _indexed in "${_indexedFiles[@]}"; do
-		echo "${_indexed}"
-	done
-	for _nonIndexed in "${_nonIndexedFiles[@]}"; do
-		echo "${_nonIndexed}"
-	done
-}
-export -f _listEntities
-
-_createIndex() {
-  # create or select an index for the current source
-  local _currentSource=$(_getSource)
-	local _sourceDir="${_HOME}/${_currentSource}"
-  local _indexDir="${_HOME}/${_currentSource}/.index"
-  local _indexName
-  local _indexPath
-
-  # Use _fzfBrowser to create an index name
-  _fzfBrowser _indexName _listIndexes "_validateName index" "indexname" "create or select index"
-
-	# abort if fzf returns null
-	[[ ${_indexName} = ":" ]] && { _warn "index creation aborted"; return; }
-	
-	# fzfBrowser returns "query:selection", so trim to selection only
-	_indexName=${_indexName#*:}
-
-  # Validate the selected or entered index name
-  if ! _isSourceNameValid "${_indexName}"; then
-    _warn "invalid index name: '${_indexName}'"
-    return 1
-  fi
-
-  # create the new index directory if it doesn't exist
-  _indexPath="${_indexDir}/${_indexName}"
-  if [[ ! -d "${_indexPath}" ]]; then
-    mkdir -p "${_indexPath}"
-    _info "index '${_indexName}' created successfully"
-  else
-    _info "index '${_indexName}' already exists"
-  fi
-
-	# set the current view to the index
-	echo ${_indexName} > "${_sourceDir}/.current"
-
-}
-export -f _createIndex
-
-_readRaw () {
-	# remove the .current file and read the raw list
-  local _currentSource=$(_getSource)
-	local _sourceDir="${_HOME}/${_currentSource}"
-	rm "${_sourceDir}/.current"
-}
-export -f _readRaw
-
-_listIndexes() {
-  # List all indexes for the current source
-  local _source=$(_getSource)
-  local _indexDir="${_HOME}/${_source}/.index"
-
-  # Check if the .index directory exists
-  if [[ -d "${_indexDir}" ]]; then
-    # List all directories inside .index (or return true if empty)
-    find "${_indexDir}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; || true
-  else
-    # If .index does not exist, return an empty list
-		true
-  fi
-}
-export -f _listIndexes
-
-_removeFromIndex() {
-  # Remove a file from the current index
-  # $1 = selected file
-  local _currentSource=$(_getSource)
-  _debug "current source is ${_currentSource}"
-  local _currentIndex="${_HOME}/${_currentSource}/.current"
-  _debug "current index is ${_currentIndex}"
-
-  # Check for the current index
-  if [ -f "${_currentIndex}" ]; then
-    local _currentIndexName=$(cat "${_currentIndex}")
-    _debug "current index name is ${_currentIndexName}"
-    local _currentIndexDir="${_HOME}/${_currentSource}/.index/${_currentIndexName}"
-    _debug "current index dir is ${_currentIndexDir}"
-  else
-    return 1
-  fi
-
-  # Remove the symbolic link
-  local _linkPath="${_currentSource}/${1}"
-  _debug "link path is ${_linkPath}"
-  if [[ -L "${_linkPath}" ]]; then
-    rm "${_linkPath}"
-    _info "removed '${1}' from index '${_currentIndexName}'"
-  else
-    _error "file '${1}' does not exist in index"
-    return 1
-  fi
-
-  # Reindex the symbolic links to start at 1 and remove gaps
-  if [[ -d "${_currentIndexDir}" ]]; then
-    _debug "Reindexing links to start at 1"
-    local _newIndex=1
-    local _links=()
-
-    # Collect all symbolic links into an array
-    while IFS= read -r -d '' _link; do
-      _links+=("${_link}")
-    done < <(find "${_currentIndexDir}" -mindepth 1 -maxdepth 1 -type l -print0 | sort -z)
-
-    # Rename each link sequentially
-    for _oldLink in "${_links[@]}"; do
-      local _newLink="${_currentIndexDir}/${_newIndex}"
-      _debug "Renaming '${_oldLink}' to '${_newLink}'"
-      mv "${_oldLink}" "${_newLink}"
-      (( _newIndex++ ))
-    done
-  fi
-}
-export -f _removeFromIndex
-
-_addToIndex() {
-  # Add a file to the current index
-  # $1 = selected file
-  local _currentSource=$(_getSource)
-  local _currentIndex="${_HOME}/${_currentSource}/.current"
-
-  # Check for the current index
-  if [ -f "${_currentIndex}" ]; then
-    local _currentIndexName=$(cat "${_currentIndex}")
-    local _currentIndexDir="${_HOME}/${_currentSource}/.index/${_currentIndexName}"
-  else
-    return 1
-  fi
-
-  # Determine the next available number for the symbolic link
-  local _nextIndex
-  local _lastIndex
-  _lastIndex=$(find "${_currentIndexDir}" -mindepth 1 -maxdepth 1 -type l -exec basename {} \; | sort -n | tail -1)
-  _nextIndex=$((_lastIndex + 1))
-
-  # Create the symbolic link
-  local _sourceFile="${_HOME}/${_currentSource}/${1}"
-  local _linkPath="${_currentIndexDir}/${_nextIndex}"
-
-  # Check if the target file is a symbolic link
-  if [[ -L "${_sourceFile}" ]]; then
-    _warn "Cannot add '${1}' to index: it is a symbolic link"
-    return 1
-  fi
-
-  # Check if the target file is a real file
-  if [[ -f "${_sourceFile}" ]]; then
-    # The link must be relative to allow for renaming
-    ln -s "$(realpath --relative-to="${_currentIndexDir}" "${_sourceFile}")" "${_linkPath}"
-    _info "Added '${1}' to index '${_currentIndexName}' as entry '${_nextIndex}'"
-  else
-    _error "File '${1}' does not exist"
-    return 1
-  fi
-}
-export -f _addToIndex
 
 _getSourceDetails() {
 	local _newSourceName=$1
@@ -1201,7 +711,6 @@ _getSourceDetails() {
 		esac
 	done
 }
-export -f _getSourceDetails
 
 _previewSource() {
 	# used by fzf during source change...shows description and entity count
@@ -1248,11 +757,10 @@ _isSourceNameValid() {
 		return 1
 	fi
 }
-export -f _isSourceNameValid
 
 _mergeSource() {
 	_current=${_currentSource}
-	_fzfBrowser _mergeWhat _getSourceList _previewSource "WHAT" "merge into '$_current'" || return
+	_namePicker _mergeWhat _getSourceList _previewSource "WHAT" "merge into '$_current'" || return
 	[[ ${_mergeWhat} = ":" ]] && { _warn "merge aborted"; return; }
 	# separate the return
 	_query=${_mergeWhat%%:*}
@@ -1289,7 +797,7 @@ _mergeSource() {
  		[[ ${_yn} != "y" ]] && { _warn "merge aborted"; return; }
 	_debug "now merge '${_what}' into '${_current}'"
 	# git mv all 
-	git -C "${_HOME}" --git-dir="${_GITDIR}" mv "${_HOME}/${_what}/"* "${_HOME}/${_what}/".* "${_HOME}/${_current}"
+	git -C "${_HOME}" --git-dir="${_GITDIR}" mv "${_HOME}/${_what}/"* "${_HOME}/${_current}"
 	# then remove if not default
 	[[ ${_what} != "default" ]] && git -C "${_HOME}" rm -rq "${_HOME}/${_what}"
 	# then commit
@@ -1297,7 +805,7 @@ _mergeSource() {
 }
 
 _newSource() {
-	_fzfBrowser _newSource _getSourceList _validateName "NEW" "choose a new source name" || continue
+	_namePicker _newSource _getSourceList _validateSourceName "NEW" "choose a new source name" || continue
 	# always use the query here
 	_newSource=${_newSource%%:*}
 	[[ -z "${_newSource}" ]] && { _warn "empty names not allowed"; return; }
@@ -1306,10 +814,9 @@ _newSource() {
   git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/${_newSource}/.description"
   git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] added ${_newSource}"
 }
-export -f _newSource
 
 _changeSource() {
-	_fzfBrowser _changeTo _getSourceList _previewSource "SOURCE" "change to selected" || return
+	_namePicker _changeTo _getSourceList _previewSource	"FILTER" "change to selected" || return
 	[[ ${_changeTo} = ":" ]] && { _warn "change source aborted"; return; }
 	# separate the return
 	_query=${_changeTo%%:*}
@@ -1344,7 +851,7 @@ _changeSource() {
 _renameSource() {
 	_current=${_currentSource}
 	[[ "${_current}" = "default" ]] && { _warn "cannot rename 'default'"; return; }
-	_fzfBrowser _newName _getSourceList _validateName "NEW-NAME" "rename '$_current'" || return
+	_namePicker _newName _getSourceList _validateSourceName "NEW-NAME" "rename '$_current'" || return
 	[[ ${_newName} = ":" ]] && { _warn "rename source aborted"; return; }
 	# always use the query here
 	_newName=${_newName%%:*}
@@ -1360,7 +867,7 @@ _edit() {
 	# launch picker to select what to edit
 	local _current=${_currentSource}
 	[[ $(_getSourceCount ${_current}) = 0 ]] && { _warn "'${_current}' is empty"; return; }
-	_fzfBrowser _what "_printSourceEntities ${_current}" _previewEntry "${_current}" "chose what to edit" || return
+	_namePicker _what "_printSourceEntities ${_current}" _previewEntry "${_current}" "chose what to edit" || return
 	[[ ${_what} = ":" ]] && { _warn "edit aborted"; return; }
 	# always use the selection
 	_file=${_what#*:}
@@ -1377,7 +884,7 @@ _browse() {
 	local _current=${_currentSource}
 	[[ $(_getSourceCount ${_current}) = 0 ]] && { _warn "'${_current}' is empty"; return; }
 	_c=${_currentSource}
-	_fzfBrowser _w _listEntities _previewEntry _setPrompt "? for help" || return
+	_namePicker _w "_printSourceEntities ${_c}" _previewEntry "${_c}" "esc to quit" || return
 }
 
 _deleteSource() {
@@ -1406,134 +913,13 @@ _search() {
 		--preview 'batcat --color=always {1} --highlight-line {2}' \
 		--preview-window 'up,60%,border-bottom,+{2}+3/3,~3'
 }
-
-########################
-# PDF
-########################
-
-_pdf() {
-	# produce a nice pdf and save to desktop
-	# source notebook provided as $1
-	local _source=${1}
-	# destination for output file
-	local _destination="$HOME/Desktop/"
-	# temp working dir
-	local _temp=$(mktemp -d)
-	# log file
-	local _logfile="${_temp}/germ_pdf.log"
-	_debug "logging to '$_logfile'"
-	# set the output file name
-	local _filename="${_source}-$(date +%Y%m%d-%H%M%S)"
-	# set the output file full path
-	local _output_full_path="${_destination}${_filename}"
-	# full commit hash (40 characters)
-	full_hash=$(git -C "${_HOME}" --git-dir="${_GITDIR}" rev-parse HEAD)
-	# Short commit hash (typically 7 characters)
-	short_hash=$(git -C "${_HOME}" --git-dir="${_GITDIR}" rev-parse --short HEAD)
-
-	# create a list of files, sorted chronologically by timestamp
-	local files=()
-		while IFS= read -r -d '' file; do
-			files+=("$file")
-		done < <(find "${_source}" -maxdepth 1 -type f -regextype posix-extended -regex ".*[0-9]{10}\.[0-9]+" -print0 | sort -z)
-
-	# add trap to remove temporary directory on exit
-#	trap 'rm -rf "$_temp"' EXIT
-
-	# gather statistics
-	local total_files=${#files[@]}
-	local words_per_file=()
-	local pages_per_file=()
 	
-	# calculate words and pages for each file
-	for file in "${files[@]}"; do
-		words_per_file+=("$(wc -w < "$file")")
-		# estimate pages (assuming ~66 lines per page with enscript defaults)
-		local file_lines=$(wc -l < "$file")
-		pages_per_file+=("$(( (file_lines + 65) / 66 ))")
-	done
-	
-	# create cover page
-	local cover_file="${_temp}/cover_page.txt"
-	cat > "$cover_file" << EOF
-
-source name: $_source
-description: $(cat ${_HOME}/${_currentSource}/.description)
-file count: $total_files
-draft date: $(date '+%Y-%m-%d %H:%M:%S %Z')
-germ git hash: $full_hash
-
-
-EOF
-	
-	# enumerate file details into cover page
-	printf "%-6s %-21s %-35s %6s %8s %7s\n" "index" "key" "name" "words" "pages" "revs" >> "$cover_file"
-	printf -- "------------------------------------------------------------------------------------------\n" >> "$cover_file"
-	for i in "${!files[@]}"; do
-		local filename=$(basename "${files[i]}")
-		local givenname=$(head -1 "${files[i]}")
-		local revs=$(git -C "${_HOME}" --git-dir="${_GITDIR}" rev-list --count HEAD -- "${files[i]}")
-		printf "%3d. %*s %-21s %-35s %5d %7d %7d\n" \
-			$((i+1)) 1 "" "$filename" "$givenname" "${words_per_file[i]}" "${pages_per_file[i]}" "$revs" >> "$cover_file"
-	done
-
-	# create cover header
-	local _header="${_MASTER}:${_NAME}:${_USERNAME}"
-	_header+="|==--DRAFT--=="
-	_header+="|${_source} [${short_hash}]"
-
-	# convert cover page to PDF
-	enscript -f Courier10 -b"${_header}" -p "${_temp}/cover.pdf" "$cover_file" >> "${_logfile}" 2>&1
-
-	# combine files into a single PDF
-	local combined_pdf="${_temp}/text_archive.pdf"
-	local temp_pdfs=()
-	for i in "${!files[@]}"; do
-		local file="${files[i]}"
-		local filename=$(basename "$file")
-
-		# create header string for each file
-		local _header="${_source}:DRAFT"
-		_header+="|$filename"
-		_header+="|page $% of $="
-
-		# convert file to PDF
-		local file_pdf="${_temp}/file_${i}.pdf"
-		enscript -f Courier10 -b"${_header}" -p "$file_pdf" "$file" >> "${_logfile}" 2>&1
-		temp_pdfs+=("$file_pdf")
-	done
-
-	# combine all PDFs
-	gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sOutputFile="$combined_pdf" \
-		"${_temp}/cover.pdf" "${temp_pdfs[@]}"
-
-	# copy final PDF to Desktop
-	cp "${combined_pdf}" "${_destination}${_filename}"
-	_info "copied file to desktop as '${_filename}'"
-}
 
 ###############
 ###### SHELL
 ###############
 
 _shell() {
-	# the main UI function
-	# use the experimental TUI mode if called (and available)
-	#source "$(dirname "$0")/tui-shell.sh"
-	#_tui_shell
-	#return
-	# Check if TUI mode is enabled
- 	if [[ "${_TUI:-false}" == "true" ]]; then
-		# Source the TUI shell script if it exists
-		if [[ -e "$(dirname "$0")/tui-shell.sh" ]]; then
-			source "$(dirname "$0")/tui-shell.sh"
-			_tui_shell
-			return
-		else
-			_warn "TUI shell not found, falling back to standard shell"
-		fi
-	fi
-
 	cd "${_HOME}" || { _error "can not enter ${_NAME}"; return 1; }
 	# set up shell history business
 	HISTFILE="${_HOME}/.${_NAME}_history"
@@ -1566,16 +952,16 @@ HEREDOC
 		printf '\n'
 		printf ':-----germ commands------------------------------------------------------------o\n'
 		printf '\n'
-		printf '  h   how to use                      == current source: "%s" ==== \n' "${_currentSource}"
-		printf '  a   add new note (editor)            C  change source                        .\n'
-		printf '  f   fast add (one line, no editor)   N  new source                           .\n'
-		printf '  e   edit (within current)            R  rename current                       .\n'
-		printf '  b   browse (within current)          M  merge (other into current)           .\n'
-		printf '  s   search                           D  delete current                       .\n'
+		printf '  H   how to use                      == current source %s ==== \n' "${_currentSource}"
+		printf '  a   add new (editor)                 c  change current                       .\n'
+		printf '  f   fast add (one line, no editor)   N  create new                           .\n'
+		printf '  e   edit                             R  rename current                       .\n'
+		printf '  b   browse                           M  merge (other into current)           .\n'
+		printf '  s   search                           D  delete current                        \n'
 		printf '                                       P  print description                    .\n'
-		printf '  p   pdf current to desktop           E  edit description                     .\n'
-		printf '                                       S  split (future)                       .\n'
-		printf '                                       B  browse all source notebooks          .\n'
+		printf '                                       E  edit description                     .\n'
+		printf '                                       S  split (future)                        \n'
+		printf '  \n'
 		printf '  \n'
 		printf '  \n'
 		printf '  \n'
@@ -1618,7 +1004,7 @@ HEREDOC
 		# disallow use of ctrl-c etc
 		trap '' SIGQUIT SIGTSTP SIGINT SIGTERM
 		_p() {
-			local _cs=$(_getSource)
+			local _cs=${_currentSource}
 			# set the prompt
 			reset=$'\001\e[0m\002'
 			_cH=$'\001\e[00;45m\002'		#home
@@ -1634,10 +1020,10 @@ HEREDOC
 		while read -rsn1 -p "$(_p)" __input || true; do
 			echo
 			case ${__input} in
-				\?)
+				h|\?)
 					_printMenu
 					;;
-				h)
+				H)
 					_printGuidance
 					;;
 				a)
@@ -1662,13 +1048,7 @@ HEREDOC
 				s)
 					_search || :
 					;;
-				p)
-					_pdf "${_currentSource}"
-					;;
-				B)
-					_browseSources || continue
-					;;
-				C)
+				c|C)
 					_changeSource || :
 					;;
 				N)
@@ -1691,7 +1071,6 @@ HEREDOC
 					${_EDITOR} "${_HOME}/${_currentSource}/.description"
   				git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/${_currentSource}/.description"
   				git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] updated '${_currentSource}' description"
-					# TODO fix this...when desc is not saved, error 
 					;;
 				P)
 					_info "current source: ${_currentSource}"
@@ -1709,7 +1088,7 @@ HEREDOC
 					_debug "debug on"
 					;;
 				$'\x07')
-					# ctrl-g (run git status)
+					# run git status
   				git -C "${_HOME}" --git-dir="${_GITDIR}" status
 					;;
 				0)
@@ -1723,7 +1102,7 @@ HEREDOC
 					;;
 				$'\e')
 					# ignore all escape sequences
-					_debug "esc ignored"
+					_debug "esc"
 					# eat anything there
 					read -rsn8 -t .002 _escape || continue
 					_debug "esc $_escape"
@@ -1747,9 +1126,6 @@ main() {
   _checkExternalTools || { _error "cannot run until these problems are resolved"; return 1; }
   # check for the working directory
   _checkHome || { _error "cannot run without a working environment"; return 1;  }
-	# check health
-	# TODO eg check for .swp file from vim crash
-	#
   # enter custom shell if no arguments
   [ -z "${_subCommand:-}" ] && _shell
   # otherwise, pass the commands to the called "command"

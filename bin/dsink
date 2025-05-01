@@ -118,6 +118,30 @@ _getOpts () {
 			help)
 				_printInfo ; _printUsage; exit 0
 				;;
+			changemonitor)
+				_subCommand=$1; shift
+				while getopts ":p:" flag; do
+					case ${flag} in
+						p)
+							_changemonitorPath="${OPTARG}"
+							;;
+					esac
+				done
+				shift $((OPTIND - 1))
+				return
+				;;
+			dsinkmonitor)
+				_subCommand=$1; shift
+				while getopts ":p:" flag; do
+					case ${flag} in
+						p)
+							_dsinkmonitorPath="${OPTARG}"
+							;;
+					esac
+				done
+				shift $((OPTIND - 1))
+				return
+				;;
 			backup)
 				_subCommand=$1; shift
 				while getopts ":r" flag; do
@@ -251,6 +275,7 @@ _setEnv() {
 	_debug "$(declare -p _SILENT)"
 	_debug "$(declare -p _LOG)"
 	_debug "$(declare -p _LOGGING)"
+	_debug "$(declare -p _fullCommand)"
 	export _MODE
 	export _MASTER
 	export _NAME
@@ -298,14 +323,188 @@ _checkExternalTools() {
 }
 
 _backup() {
-	# rsync from local source to mounted usb destination
-	#TODO fix rsync...now that dsink mounts within!
-	# this whole function needs a lot of work now
+	# backup everything with rsync
+	# first check that we have a mounted dsink device
 	_checkMount || { _warn "dsink usb device not mounted"; return 1; }
 	_rsyncDest="${_MOUNT}"/rsync/
-	rsync --exclude .dsink/mount/ -a "${_notelosHOME}" "${_rsyncDest}" &
+	#rsync --exclude .dsink/mount/ -a "${_notelosHOME}" "${_rsyncDest}" &
+	rsync --exclude .dsink/mount/ -a "${_notelosHOME}" "${_rsyncDest}" --log-file=/tmp/rsync.log &
 	_info "backup from ${_notelosHOME} to ${_rsyncDest} initiated"
+	# TODO refashion rsync as a coproc per mnemon mgt of whisper and ffmpeg
+	# this way we can update the state of the rsync job...and even pause or
+	# terminate it...but also not hang on umount while rsync runs!
+	return
+	mkdir -p "${_notelosHOME}/.dsink/backup/"
+	coproc RSYNC { rsync \
+		--eta --stats --progress --human-readable \
+		--exclude .dsink/mount/ \
+		--exclude .dsink/backup/ \
+		--archive "${_notelosHOME}" "${_rsyncDest}" \
+		--log-file=.dsink/backup/rsync.log &
+		# once the backup is complete, do cleanup
+		# record the backup
+	}
 }
+# for the backup function...when it runs, it should do this:
+# reset the counter to zero if there is a value
+#for file in "${counter}"/*; do
+#	[ -f "${file}" ] && rm "${file}"
+#done
+
+
+# backup monitor design
+# start...
+# 1. check for mounted dsink device
+# 1a update state
+
+_dsinkmonitor() {
+	# monitor the dsink mount point and disks it depends on
+	local mountpoint=$1			# use arg 1 for mountpoint
+	local mounted						# true/false registered as touch file in stateDIR
+	local stateDIR="${_notelosHOME}/.dsink/state/mounted/"
+	local foundstate				# what monitor found in state
+	local checkfrequency=5	# how often to test the mount
+	# findmnt --poll=mount,umount $mountpoint
+	# read each line to monitor mount and umount events
+	# register into .dsink/state/mounted: true|false
+	# make sure the mount state dir exists
+	[ ! -d "${stateDIR}" ] && mkdir -p "${stateDIR}"
+	# read what state says is the case
+	if [ -f "${stateDIR}"/* ]; then
+		# state is set already
+		foundstate=$(basename "${stateDIR}"/*)
+	else
+		# no state registered
+		foundstate=unknown
+	fi
+	# define the monitor loop function
+	mountmonitor() {
+		while true; do
+			if findmnt "${mountpoint}" >/dev/null; then
+				# mount is true
+				touch "${stateDIR}true"
+			else
+				touch "${stateDIR}false"
+			fi
+			sleep ${checkfrequency}
+		done
+	}
+	# start the monitor
+	mountmonitor
+}
+# TODO note that findmnt isn't totally reliable
+# eg i can pull the usb key and findmnt still reports true
+# need a better means of detecting the loss of the mount
+# monitor udevadm?
+# interestingly, i can pull a mounted luks usb device, then replace it, 
+# and nothing happens...robust in one sense, problematic in the sense that a
+# process that relies on the mount would have no way of knowing the device was
+# missing
+# for example, i can pull the usb of a mounted dsink, then run:
+# findmnt -x --verbose -D /home/jason/notelos/.dsink/mount
+# which returns no errors
+# i see that when the usb is pulled, then replaced, the mount goes read-only
+# i also see that if the drive is pulled, i can touch a file on the "mounted"
+# filesystem without error (the buffers seem to not care that the drive is gone)
+# a second touch fails, and then the drive is marked as read-only
+# without any io, the findmnt, mount, and monitoring /proc is ineffective
+# use sync -f
+# 1. check mount
+# 2. touch "heartbeat" file and sync
+# 3. if error, look for physical device
+# 4. if present, remount
+# 5. if absent, mark PHYS status
+
+# 2. use inotifywait to monitor for changes in notelosHOME
+
+_changemonitor() {
+	# monitor directory recursively for changes
+	# increment counter when changes are reported
+	# note that this is NOT an accurate measure of the actual number of changes,
+	# but a rough measure instead...to be used as a gauge
+	# to observe the changes live, run:
+	# inotifywait -m -r --exclude '.dsink/state' --event modify,move,create,delete
+	#
+	# used by notelos when a session opens
+	#
+	#trap '_info "changemonitor $BASHPID was terminated"' SIGTERM
+	# WHY would this trap command prevent the normal termination of the child
+	# process? because it does
+	
+	local currentvalue	# counter used to track (approx) how many changes
+	local cooloff=1			# how long to sleep after each increment (change granularity)
+	# the path is specified as a parameter with the -p flag and set in _getOpts
+	local source="${_changemonitorPath}"
+	# counter located within tracked dir (excluded from inotifywait)
+	local counter="${source}/.dsink/state/counter"
+	# make sure the counter dir exists
+	[ ! -d "${counter}" ] && mkdir -p "${counter}"
+	# define the inotifywait loop function
+	monitor() {
+		#TODO there is a problem here, as a left mount from mnemon
+		# borks the function...the first inotifywait fails, then
+		# the function falls into a loop
+		# so, run inotifywait once and test if it returns 0
+		#inotifywait -qq --recursive --exclude '.dsink/state' "${source}" 2>/dev/null
+		if $(inotifywait -qq --recursive --exclude '.dsink/state' "${source}" 2>/dev/null); then
+			_debug "${FUNCNAME[0]}: inotifywait returned 0"
+		else
+			_debug "${FUNCNAME[0]}: inotifywait encountered an error [$?]"
+			_warn "changemonitor encountered an error and is not running"
+			_warn "use 'fusermount -u /home/jason/notelos/mnemon/state/iphone/mount'"
+			_warn "  to unmount stale mount"
+			return 1
+		fi
+		# looks clean...now enter the loop
+		while inotifywait -qq --recursive --exclude '.dsink/state' --event modify,move,create,delete "${source}"; do
+			# first, get current counter value
+			for x in "${counter}"/*; do
+				if [ -f "${x}" ]; then
+					# there is a counter value, read it
+					currentvalue=$(basename "${x}")
+					# then remove it
+					rm "${x}"
+				else
+					# there is no value set
+					currentvalue=0
+				fi
+			done
+			# next increment counter value by 1
+			(( currentvalue += 1 ))
+			# TODO define a MAX value before some other action is taken
+			# finally, update the counter
+			touch "${counter}/${currentvalue}"
+			# sleep the designated cooling off period
+			sleep "${cooloff}"
+		done
+		# make the function recursive
+		monitor "${source}"
+	}
+	# begin the inotifywait loop
+	monitor
+	# debugging problems with this
+	_warn "changemonitor child process $BASHPID exited unexpectedly"
+}
+
+# dsink backup design
+# state dir .dsink/state
+# successful backup
+#   catalog/media/$MEDIAID/full/$UNIXTIME
+# to calculate the age...subtract full/time from now
+#
+# notelos state (in status line)
+# copies (not including source)
+# 1 : ridealong usb (is dsink mounted?)
+# 2 : keychain usb (check last other mounted dsink)
+# 3 : tertiary usb (check last 2nd other mounted dsink)
+# 4 : local archive 
+# 5 : iphone archive
+# colorscheme
+# current: green (tracking changes live with background rsync)
+# session: yellow (changes since new session...ie usb swap required)
+# stale: red (changes beyond current session)
+# copied to iphone: blue
+# detected on icloud: magenta
 
 _format() {
 	# catch premature exits
@@ -349,6 +548,12 @@ _format() {
 	_info "label new dsink device as ${label}${_ptuuid:0:3}${reset} now"
 }
 
+# TODO format
+# update catalog/media with
+# size, name, uuid, etc
+# format time
+# use uudevadm to ignore these devices (to prevent the popup when inserted)
+
 # disk media catalog
 # 1. DIR disk id: $_ptuuid:0:3
 # 2. TOUCH remaining ptuuid
@@ -367,7 +572,6 @@ _doMakeFS() {
 }
 
 _doEncrypt() {
-	set -x
 	# arg 1 = partition (eg /dev/sda1)
 	# encrypt the device with luks, then open the device
 	sudo cryptsetup luksFormat --verify-passphrase --batch-mode ${1} || \
@@ -388,7 +592,7 @@ _doWritePartition() {
 }
 
 _status() {
-	if [[ ${_printName} = "true" ]]; then
+	if [[ ${_printName:-} = "true" ]]; then
 	 	if _checkMount; then
 		 	_getMountedName
 			return 0
@@ -724,6 +928,8 @@ _mount() {
 		_info "insert a dsink device and try again"
 	fi
 }
+# TODO experiment with sync mount...will it kill performance or improve data
+# reliability...the usb can be removed too easily...
 
 _checkMapperFile() {
 	if [ -e /dev/mapper/dsink ]; then
@@ -734,17 +940,21 @@ _checkMapperFile() {
 }
 
 _findUnmountedDsink() {
-	# search for a dsink device
+	# search for an unmounted dsink device
 	echo DO
+	# lsblk --fs
+	# the above lists out devices
+	# lsblk -e7
+	# excludes loopback devices
+
 }
 
 _checkCrypt() {
-	# check for active crypt dsink device
+	# check for active (unlocked) crypt dsink device
 	# return 0 if true (active)
 	local _deviceName="dsink"
 	local _lsblkInfo
 	#if dmsetup status "${_deviceName}" &>/dev/null; then
-	#if ls /dev/mapper/dsink &>/dev/null; then
 	_lsblkInfo=$(lsblk -n /dev/mapper/${_deviceName} 2>/dev/null)
 	if [[ $? = 0 ]]; then
 		#_debug "${FUNCNAME[0]}: active crypt device '${_deviceName}'"

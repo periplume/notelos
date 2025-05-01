@@ -5,7 +5,7 @@
 # desc: installer script for notelos suite
 
 # DEBUG (set to true to see _debug messages)
-_DEBUG=true
+#_DEBUG=true
 
 # SCRIPT AND SHELL SETTINGS
 set -o errexit
@@ -14,21 +14,21 @@ set -o pipefail
 IFS=$'\n\t'
 
 _checkSudo() {
-	# check for sudo privileges (heuristic, not exhaustive)
-	# return 0 if they seem to exist
-	# return 1 if user has sudo privileges, but inactive session
+	# check for sudo privileges
+	# (heuristic, but not exhaustive)
+	# return 0 if they seem to exist (an active session)
+	# return 1 if user has sudo privileges (but inactive session)
 	# return 2 if user has no sudo privileges
 	local _sudoReturnCode
 	local _errorCode
 	_debug "checking for sudo privileges"
 	# first try sudo -n with any command...if this returns zero, we are good
-	#sudo -n date >/dev/null 2>&1 && _sudoReturnCode=$? || _sudoReturnCode=$?
 	sudo -n date >/dev/null 2>&1
 	_sudoReturnCode=$?
-	_debug "'sudo -n date' returned ${_sudoReturnCode:-unset}"
+	_debug "'sudo -n date' returned ${_sudoReturnCode}"
 	# if this returns zero, we return 0
 	[ $_sudoReturnCode = 0 ] && return 0
-	_warn "no active sudo session detected"
+	_debug "no active sudo session detected"
 	_debug "testing for sudoers privileges"
 	# next use sudo -v, which returns 1 if user is not a valid sudoer
 	# we use timeout to kill sudo -v...then capture the timeout return code
@@ -44,8 +44,8 @@ _checkSudo() {
 		_warn "user has sudo privileges; however session is inactive"
 		return 0
 	else
-		# so other error
-		_warn "unexpected error; 'timeout -k .1 .1 sudo -S -v' returned $_errorCode"
+		# some other error
+		_warn "unexpected error; 'timeout -k .2 .2 sudo -S -v' returned $_errorCode"
 		return 1
 	fi
 }
@@ -113,6 +113,7 @@ _installExternals() {
 			;;
 		cargo)
 			# installs all in $HOME...remove with 'rustup self uninstall'
+			# many frown on the "pipe install" method but we allow it here
 			_info "installing rust..."
 			curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -qy &> ${_temp}/rust_install.out
 			[[ $? = 0 ]] && _info "done" || { _error "failed"; return 1; }
@@ -164,17 +165,19 @@ hash realpath || { echo 'realpath is required'; return 1; }
 _printUsage () {
   cat << EOF
 
-description: installs notelos from a local git repo into the
+description: installer for notelos 
+
+from a local git repo into the
 user's HOME/bin directory; also creates the notelos repo
 
 usage: notelos.installer [OPTIONS] <command> [OPTIONS]
 
 options:
--h          print help
--d          do not ask user for alternate locations
+-h          help
+-j          just do install using defaults (do not ask)
 -n <name>   alt install name         (default is notelos)
 -p <path>   alt install base path    (default is \$HOME)
--D          enables developer mode (live repo incorporated)
+-d          print debug messages
 
 commands:
  install                install notelos
@@ -214,9 +217,12 @@ _debug() {
 ####################################
 
 _fmt() {
-	# arg 1 = the kind of thing
-	# arg 2 = the string to be formatted
+	# arg 1 = specify the kind of thing
+	# arg 2 = the string to be formatted (must be "quoted message")
+	# print a path in green
 	[[ $1 = "path" ]] && printf "\033[38;5;3m%s\033[0m\n" "$2"
+	# print an email address in yellow
+	[[ $1 = "email" ]] && printf "\033[38;5;11m%s\033[0m\n" "$2"
 }
 
 ####################################
@@ -227,33 +233,32 @@ _getOpts () {
 	# read all the positional parameters and set things accordingly
 	# first look for the global option flags and option arguments
 	local OPTIND
-	while getopts ":hdDn:p:" flag; do
+	while getopts ":hjdn:p:" flag; do
 		case ${flag} in 
 			h)
 				_printUsage; exit 0
 				;;
 			n)
 				# don't allow flags to be arguments to flags
-				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+				[[ "${OPTARG}" == -* ]] \
+				 	&& { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
 				_warn "setting notelos name to '${OPTARG}'"
 				_altNAME=${OPTARG}
-				#_justDo=true
 				;;
 			p)
 				# don't allow flags to be arguments to flags
-				[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+				[[ "${OPTARG}" == -* ]] \
+					&& { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
 				_warn "setting notelos base dir to '${OPTARG}'"
 				_altBASE=${OPTARG}
-				#_justDo=true
 				;;
-			d)
-				# do not query the user, just do it
+			j)
+				# do not query the user, just do it using defaults
 				_justDo=true
 				;;
-			D)
-				_warn "developer mode true"
-				# developer mode (future feature)
-				_developerMode=true
+			d)
+				_warn "debug mode enabled"
+				_DEBUG=true
 				;;
 			?)
 				echo "invalid global option: -$OPTARG"; exit 1
@@ -272,24 +277,6 @@ _getOpts () {
 				;;
 			install)
 				_subCommand=$1; shift
-				#while getopts ":b" flag; do
-				#	case ${flag} in
-				#		b)
-				#			# store the notelos suite of scripts in $HOME/bin
-				#			# TODO this should not be an option...otherwise confusing path
-				#			# problem emerges
-				#			_binIntegral=false
-				#			_warn "using '\$HOME/bin' for executables"
-				#			;;	
-				#		\?)
-				# 			_error "${FUNCNAME[0]}: unknown flag '-${OPTARG}'"; exit 1
-				#			;;
-				#		:)
-				#			_error "${FUNCNAME[0]}: arg required for '-${OPTARG}'"; exit 1
-				#		;;
-				#	esac
-				#done
-				#shift $((OPTIND - 1))
 				;;
 			upgrade)
 				_subCommand=$1; shift
@@ -297,7 +284,8 @@ _getOpts () {
 					case ${flag} in
 						s)
 							# don't allow flags to be arguments to flags
-							[[ "${OPTARG}" == -* ]] && { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
+							[[ "${OPTARG}" == -* ]] \
+								&& { _error "option '-${flag}' requires an argument that is NOT a flag ($OPTARG)"; exit 1; }
 							# only do the "specific" file designated
 							_specificFile="${OPTARG}"
 							_info "installing specific file '${_specificFile}'"
@@ -334,29 +322,26 @@ _setEnv() {
 	# determine the calling script
 	# experimenting with a "pipe install" shows that using these methods to
 	# determine what we need are all unreliable
+	_debug "setting up the environment now"
+	# the name of this script
 	_selfNAME=$(basename "${BASH_SOURCE[0]}")
+	# the absolute path of this script
 	_selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
+	# the base dir of this script
 	_selfBASE=$(dirname "${_selfABSOLUTE}")
-	# determine the intended destination
-	#_notelosNAME=${_altNAME:-${_selfNAME%%.*}}  # unreliable (if piped)
+	# now determine the intended destination
 	_notelosNAME=${_altNAME:-notelos}
 	_notelosBASE=$(readlink -f "${_altBASE:-${HOME}}")
 	_notelosHOME=$(realpath "${_notelosBASE}/${_notelosNAME}")
 	_notelosLAB=${_selfBASE}
 	_notelosBIN="${_notelosHOME}/.bin"
-	## settle the location of executable scripts and library and PATH
-	#if [ "${_binIntegral:-true}" = true ]; then
-	#	# all scripts deployed into .bin directory within _notelosHOME
-	#	_notelosBIN="${_notelosHOME}/.bin"
-	#else
-	#	# user prefers $HOME/bin
-	#	_notelosBIN="${HOME}/bin"
-	#fi
 	# determine user's full name and email from git if possible
-	git config --global --get user.name 1>/dev/null && _notelosUSERFULLNAME=$(git config --global --get user.name)
-	git config --global --get user.email 1>/dev/null && _notelosUSEREMAIL=$(git config --global --get user.email)
+	git config --global --get user.name 1>/dev/null \
+	 	&& _notelosUSERFULLNAME=$(git config --global --get user.name)
+	git config --global --get user.email 1>/dev/null \
+		&& _notelosUSEREMAIL=$(git config --global --get user.email)
+	# use whoami to set the notelos user name
 	_notelosUSERNAME=$(whoami)
-	#[ -z "${_notelosUSERNAME:-}" ] && _notelosUSERNAME=$(whoami)
 	[ -z "${_notelosUSEREMAIL:-}" ] && _notelosUSEREMAIL="unknown"
 	[ -z "${_notelosUSERFULLNAME:-}" ] && _notelosUSERFULLNAME=${_notelosUSERNAME}
 	# make these global
@@ -666,7 +651,7 @@ main() {
 	# setup the environment after processing all command line parameters
 	_setEnv
 	# check for sudo priveledges
-	_checkSudo && _info "sudo looks good" || _warn "sudo permissions will be needed"
+	_checkSudo && _info "sudo looks good" || _warn "sudo permissions will be needed for some operations"
 	# check for external requirements
 	_checkExternals
 	_debug "full command is '${_selfNAME} ${_fullCommand}'"

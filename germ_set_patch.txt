@@ -1,0 +1,47 @@
+Add the following to the fzfBrowser function at line ~790 - after the 'main help' bindings:
+
+# Set management bindings
+FZF_COMMAND+=(--bind="ctrl-s:execute(_toggleSetView)")
+FZF_COMMAND+=(--bind="ctrl-s:+reload(${_input})")
+FZF_COMMAND+=(--bind="ctrl-s:+transform-prompt(_setPrompt)")
+
+FZF_COMMAND+=(--bind="ctrl-n:execute(_createSet)")
+FZF_COMMAND+=(--bind="ctrl-n:+reload(${_input})")
+FZF_COMMAND+=(--bind="ctrl-n:+transform-prompt(_setPrompt)")
+
+FZF_COMMAND+=(--bind="alt-s:execute(_addToSet {})")
+FZF_COMMAND+=(--bind="alt-s:+reload(${_input})")
+
+FZF_COMMAND+=(--bind="alt-r:execute(_removeFromSet {})")
+FZF_COMMAND+=(--bind="alt-r:+reload(${_input})")
+
+Add the following to _showHelp function:
+
+ set management
+ - ctrl-s  toggle set view mode
+ - ctrl-n  create a new set
+ - alt-s   add selected notebook to a set
+ - alt-r   remove selected notebook from current set
+
+Add the following case statements to _mainPrompt function around line 1850:
+
+V)
+  # Toggle set view mode
+  _toggleSetView
+  ;;
+K)
+  # Create a new set
+  _createSet
+  ;;
+T)
+  # List all sets
+  if [[ -d "${_HOME}/sets" ]]; then
+    _info "Available notebook sets:"
+    for set in $(find "${_HOME}/sets" -mindepth 1 -maxdepth 1 -type d -exec basename {} \;); do
+      local count=$(find "${_HOME}/sets/${set}" -mindepth 1 -maxdepth 1 -type l | wc -l)
+      _info "  ${set} [${count} notebooks]"
+    done
+  else
+    _warn "No sets directory found"
+  fi
+  ;;

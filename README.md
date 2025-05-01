@@ -109,11 +109,11 @@ Then run the installer script to copy the bash script files into
 place:
 
 ```
-# notelos.install
+# notelos.installer
 ```
 
-The installer has a few options which `notelos.install -h` 
+The installer has a few options which `notelos.installer -h` 
 explains.
 
 The installer will report on broader dependencies but will proceed 
-without those external commands which the studio suite requires.
+without those external commands which the whole suite of tools requires.

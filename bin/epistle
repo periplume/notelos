@@ -11,7 +11,7 @@ set -o pipefail
 IFS=$'\n\t'
 
 ###########################
-# PREREQUISITES
+# DEPENDENCIES
 ###########################
  
 # required external commands
@@ -40,8 +40,8 @@ _SILENT=false
 # logging facility
 _LOG=false
 
-# instantiate the log/mesg functions with defaults (these will be re-initialized
-# after reading positional parameters)
+# instantiate the log/mesg functions with defaults above
+# (positional parameters will update when _setEnv runs)
 _fLOG
 
 ####################################

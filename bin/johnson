@@ -99,7 +99,7 @@ _printCommands
 
 _printCommands() {
   cat <<  EOF
- lookup         thats it
+ lookup         words...thats it
 EOF
 }
 
@@ -325,8 +325,8 @@ _create() {
   git -C "${_HOME}" config user.name "${_USERNAME}"
   git -C "${_HOME}" config user.email "${_USEREMAIL}"
   # make the johnson working dirs
-  mkdir "${_HOME}/cache"          # the live recording
-  mkdir "${_HOME}/resource"        # the queue of audio files
+  mkdir "${_HOME}/cache"				# future caching of internet resources
+  mkdir "${_HOME}/resource"			# all resource files stored here
   # ignore cache
   echo "cache/" > "${_HOME}/.gitignore"
   # add gitignore and make first commit
@@ -372,8 +372,6 @@ _downloadResources() {
 	fi
 }
 
-
-# fetch the huge wordlist from git
 _gitFetch() {
 	local repo_url=$1
 	local repo_dir=$2
@@ -389,74 +387,104 @@ _gitFetch() {
 _cycleView() {
 	# use indexed array to define the possible views to cycle through
 	declare -a _allViews=( dict-gcide dict-moby wordnet wik )
+
+	# use associative array to define the command for each view
 	declare -A _viewCommands
 	_viewCommands[dict-gcide]="dict -d gcide $1 | colorit"
 	_viewCommands[dict-moby]="dict -d moby-thesaurus $1 | colorit"
 	_viewCommands[wordnet]="wn $1 -over | sed 's/$1/\x1b[32m$1\x1b[0m/g'"
 	_viewCommands[wik]="_wikGet $1"
+	
 	_wikGet() {
-		[ ${_notelosONLINE} = "false" ] && { echo "OFFLINE"; return; }
+		# rudimentary fetch function for wiktionary
+		# arg 1 = word to look up
 		word="$1"
+
+		# check cache first
+		if [[ -f "${_HOME}/cache/${1}" ]]; then
+			_cached=true
+			_debug "cached file for '${word}' exists"
+		else
+			_cached=false
+			_debug "no cached file for '${word}'"
+		fi
+		
+		# set the url string
 		wik_url="https://en.wiktionary.org/wiki/$word"
+		
+		# don't use the network in OFFLINE mode
+		if [ ${_notelosONLINE} = "false" ]; then
+			# check cache, return the cache file if it exists
+			if [[ ${_cached} = true ]]; then
+				cat "${_HOME}/cache/${word}" | colorit
+				return
+			else
+		 		echo "OFFLINE and no cache for '$word'"
+				return
+			fi
+		fi
+
+		# online mode follows
+		
+		# if file is in the cache, just display cache
+		if [[ ${_cached} = "true" ]]; then
+			_debug "CACHE version"
+			cat "${_HOME}/cache/${word}" | colorit
+			return
+		fi
+
+		# use lynx to dump the page to cache
+		# use sed to filter out the title page...up to ^English
+		lynx -dump -nolist -nonumbers -force_html "${wik_url}" | sed -n '/^English/,$p' > "${_HOME}/cache/${word}"
+
+		# finally, return it after 
+		cat "${_HOME}/cache/${word}" | colorit
+		return
+
 		# we use lynx to grab the page (without links) and let sed filter out all
 		# the title page crap until we find the ^English line...which seems to be
 		# the right pattern to start from...then pipe it to colorit (which i think
 		# uses ansi to colorize the text (not well) so the fzf preview window can
 		# display some color
-		lynx -dump -nolist -nonumbers -force_html "https://en.wiktionary.org/wiki/$word" | sed \
-			-n '/^English/,$p' | colorit
-		# lynx definitely does not display itself in the fzf preview window
-		#lynx -nolist -cookies=off "https://en.wiktionary.org/wiki/$word"
 	}
-	_wiktionGet() {
-		word="$1"
-		wik_url="https://en.wiktionary.org/wiki/$word"
-		page_content=$(curl -s "$wik_url")
-		defs=$(echo "$page_content" | grep -oP '<span class="toctext">[^<]*</span>' | sed 's/<[^>]*>//g')
-		if [ -z "${defs}" ]; then
-			echo "nothing found on wiktionary for '$word'"
-		else
-			echo "found definitions for '$word' on wiktionary"
-			echo "$defs"
-		fi
-	}
+
 	# set the local var (which we set if unset...or get from touch file if set)
 	local _currentView
 	local _currentIndex
-	#echo "length of _allViews list: '${#_allViews[@]}'"
+	local statefile="${_HOME}/.currentView"
 	# we use a local hidden file to keep state...no other way sadly
-	if [[ -e .currentView ]]; then
-		_currentView=$(cat .currentView)
-		#echo "current view is already set: '${_currentView}'"
+	if [[ -e "${statefile}" ]]; then
+		_currentView=$(cat "${statefile}")
+		_debug "current view is already set: '${_currentView}'"
 		# damn bash makes some things really difficult...give me the index of the
 		# current value in the list:
 		for i in "${!_allViews[@]}"; do
 			if [[ "${_allViews[$i]}" = "${_currentView}" ]]; then
 				_currentIndex=$i
-				#echo "_currentIndex is ${_currentIndex}"
+				_debug "_currentIndex is ${_currentIndex}"
 			fi
 		done
-		#echo "reset to the next index, or the first if this is the last"
+		_debug "reset to the next index, or the first if this is the last"
 		_adjustedIndex=$((_currentIndex+1))	
 		if [[ ${_adjustedIndex} = ${#_allViews[@]} ]]; then
-			#echo "already at the last...set to the first"
+			_debug "already at the last...set to the first"
 			_currentView=${_allViews[0]}
-			echo ${_currentView} > .currentView
-			#echo "current view set to ${_currentView}"
+			echo ${_currentView} > "${statefile}"
+			_debug "current view set to ${_currentView}"
 		else
-			#echo "just increment by one"
+			_debug "just increment by one"
 			((_adjustedIndex+1))
 			_currentView=${_allViews[${_adjustedIndex}]}
-			echo ${_currentView} > .currentView
-			#echo "current view set to ${_currentView}"
+			echo ${_currentView} > "${statefile}"
+			_debug "current view set to ${_currentView}"
 		fi 
 		# now set it to the next, and if the current index is equal to the length
 		# (minding that the index is n-1, of course)
 	else
-		#echo "current view is not set; setting to first item"
+		_debug "current view is not set; setting to first item"
 		_currentView=${_allViews%% *}
-		echo ${_currentView} > .currentView
-		#echo "current view set to ${_currentView}"
+		echo ${_currentView} > "${statefile}"
+		_debug "current view set to ${_currentView}"
 	fi
 	echo "${_currentView}"
 	echo "==$(tput cols)======${_viewCommands[${_currentView}]}================"
@@ -519,10 +547,10 @@ _lookup() {
 	_setPreview() {
 		if [ $_width -lt 100 ]; then
 		 	_view=constrained
-			export FZF_DEFAULT_OPTS="--preview-window=right,60%,border-thinblock,wrap,~2 --preview-label=constrained"
+			export FZF_DEFAULT_OPTS="--preview-window=right,60%,border-thinblock,wrap,~2 --preview-label=constrained-view"
 		else
 			_view=normal
-			export FZF_DEFAULT_OPTS="--preview-window=right,70%,border-thinblock,wrap,~2 --preview-label=normal"
+			export FZF_DEFAULT_OPTS="--preview-window=right,80%,border-thinblock,wrap,~2 --preview-label=normal-view"
 		fi
 		}
 	_setPreview

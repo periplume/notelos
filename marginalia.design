@@ -1,0 +1,31 @@
+work with shakespeare first
+break text into plays, etc
+acts, scenes, and line numbers would be valuable
+
+viewer to the right...the text
+notes to the left...marginalia
+
+actions one normally does
+underline, mark, scratch, note, point, group, circle,
+
+there must be a better way digitally to "mark" the text without
+actually changing the source text
+
+notations could be used in the notes side
+> insert comment
+=
++
+and so on...as macro actions that indicate or direct how the note
+is to be "inserted" when the text is merged with the notes
+
+thus there are two "modes"
+a notate mode...where the user has the original text to read
+and the note window is active and corresponds to the text
+
+and a merged mode, where the source text has the notes
+inserted ie merged into the source text, based on the directives
+
+this would be the better implementation of the seed idea i've
+experiemented with, ie transcribing marginalia from an analog
+copy...this proves to be a difficult problem...to "digitize" one's
+marginalia notes from a book. 

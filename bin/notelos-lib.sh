@@ -65,6 +65,36 @@ reset=$(tput sgr0)
 #TODO change instantiation to _DEBUG only, allowing each module
 # to selectively turn on or off (ie override)...now the inheritance
 # is absolute and cannot be overridden
+
+# TODO
+# add method _warnREAD to read the last warning message
+# add method _fLOG_READ to read last any message (debug?)
+# or keep a special debug register
+# or add _fLOG_STATUS and make this the notelos master
+# register...the result of the last "command" as pressed
+# so, eg, pressing a key that gets a fail code will update
+# the _fLOG_STATUS string with a WARN...etc and the "message"
+# this would be defined in the main menu of notelos...where
+# each command is run, and instead of pipe to true to catch
+# errors...pipe to an if and update the STATUS register so
+# that each ky press updates the "message to user" or the 
+# status message from the command
+# will need one for user...key press ie commands
+# and one for background jobs...as each updates they update
+# the eg _fLOG_JOBS ... something like bash jobs control
+# but super simple...
+# each _warn eg would update a "register" ie a global var
+# _warnLAST, which would be updated whenever _warn executes
+# that then can be read by the menu function...
+# this could also be a list...fifo...truncated, say, with
+# a settable max, default 25...
+# this also suggests a viewer with fzf...each message could
+# be made more useful and interesting if correlated to the
+# set of commands that the message was produced by...the
+# "notelos command" and the corresponding "bash commands" and
+# return codes...starts to get too deep for no good here...
+# to be stored by _fLOG instantiations of each...
+
 ##################################################
 # LOGGING AND CONSOLE MESSAGES AND USER INTERFACE
 ##################################################

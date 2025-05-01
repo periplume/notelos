@@ -1,0 +1,31 @@
+# Using Notebook Sets in Germ
+
+Notebook sets allow you to group related notebooks together for easier organization and navigation.
+
+## Key features:
+1. Create sets that contain symbolic links to notebooks
+2. Toggle between viewing all notebooks and viewing sets
+3. Browse notebooks within a specific set
+
+## How to use:
+
+### From the main menu:
+- Press `K` to create a new set
+- Press `T` to list all available sets with notebook counts
+- Press `V` to toggle set view mode
+
+### Within the browser (press `b` to access):
+- Press `ctrl-s` to toggle between normal view and set view
+- Press `ctrl-n` to create a new set
+- Press `alt-s` to add the selected notebook to a set
+- Press `alt-r` to remove the selected notebook from the current set
+
+### Set view modes:
+1. Normal view: Shows all notebooks
+2. Set list view: Shows available sets with counts, e.g., "lgb[11]"
+3. Set content view: Shows notebooks belonging to a specific set
+
+## Implementation details:
+- Sets are stored in the `sets/` directory
+- Each set is a directory containing symbolic links to notebooks
+- No changes are made to the notebook directory structure
