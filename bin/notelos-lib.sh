@@ -223,11 +223,19 @@ _fLOG() {
 		_error() { : ; }
 		_ask() { : ; }
 	fi
+	# export the functions
 	export -f _debug
 	export -f _info
 	export -f _warn
 	export -f _error
 	export -f _ask
+	# export the colors
+	export _cDebug
+	export _cInfo
+	export _cWarn
+	export _cError
+	export _cAsk
+	export _cReset
 }
 
 _XfLOG() {
