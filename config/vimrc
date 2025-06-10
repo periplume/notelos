@@ -195,16 +195,25 @@ if &term =~ "xterm\\|rxvt"
   autocmd VimLeave * silent !echo -ne "\033]112\007"
 endif
 
-
-
 " set fast cursor switching
 set ttimeout
 set ttimeoutlen=1
 set ttyfast
 
-
 " kep mappings
 map = dd
+
+" map ctrl-p to zz to recenter the page in insert mode
+inoremap <C-p> <C-o>zz
+" note, this removes the standard 'vim insert mode completion' binding
+" it also suggests to me how to integrate spell and johnson in the future
+" SO remember that ctrl-p and insert mode completion leads the way to 
+" a slick way to find the next word
+" in the meantime, map the old mode into ctrl-x ctrl-p
+inoremap <C-x><C-p> <C-p>
+
+" map alt-left to :q to match germFZF browser behavior
+nnoremap <M-Left> :q<CR>
 
 " autocorrect common typos
 iab teh the

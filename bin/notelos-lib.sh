@@ -786,11 +786,74 @@ getHTTPheaders () {
 # check out lazygit
 
 ### UNIFIED EDITOR
+#_notelosEdit() {
+#	# given path ($1)
+#	[[ -z "${1}" ]] && { _error "full path is required"; return 1; }
+#  local _file=${1}
+#	vim -u "${_notelosHOME}/.config/vimrc" -c 'set syntax=markdown' "${_file}"
+#}
+#export -f _notelosEdit
+
 _notelosEdit() {
-	# given path ($1)
-	[[ -z "${1}" ]] && { _error "full path is required"; return 1; }
-  local _file=${1}
-	vim -u "${_notelosHOME}/.config/vimrc" -c 'set syntax=markdown' "${_file}"
+	exec 2>>/tmp/fzf.debug
+	#set -x
+  # Function to open a file in the editor with optional line number and mode
+  # Args:
+  #   $1: File path (required)
+  #   $2: Line number (optional: 0, x, or "last")
+  #   $3: Mode (optional: "view" for read-only, "insert" for insert mode)
+
+  local file="${1:-}"
+  local line="${2:-}"
+  local mode="${3:-}"
+	local vimrc="-u ${_notelosHOME}/.config/vimrc"
+
+  # Ensure the file exists
+  #if [[ ! -f "${file}" ]]; then
+  #  _error "file '${file}' does not exist."
+  #  return 1
+  #fi
+
+  # handle line number
+  if [[ -n "${line}" ]]; then
+    case "${line}" in
+      1)
+        # open at the beginning of the file
+        editor_cmd+=" +1"
+        ;;
+      last)
+        # open at the last line of the file
+        editor_cmd+=" +"
+        ;;
+      *)
+        # open at the specified line number (or 1)
+        if [[ "${line}" =~ ^[0-9]+$ ]]; then
+          editor_cmd+=" +${line}"
+        else
+        	editor_cmd+=" +1"
+        fi
+        ;;
+    esac
+  fi
+
+  # handle mode
+  case "${mode}" in
+    view)
+      # open in read-only mode
+      editor_cmd+=" -R"
+      ;;
+    insert)
+      # open in insert mode
+      editor_cmd+=" +startinsert"
+      ;;
+    *)
+			# open in normal mode (default)
+      :
+      ;;
+  esac
+
+  # execute the editor command
+  vim ${vimrc} ${editor_cmd} "${file}"
 }
 export -f _notelosEdit
 

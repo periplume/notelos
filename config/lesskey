@@ -1,0 +1,8 @@
+#command
+\kl prev-file
+\kr next-file
+\e[1;3D quit
+\21 quit
+
+#env
+LESS = -i 

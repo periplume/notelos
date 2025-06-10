@@ -447,7 +447,8 @@ _changemonitor() {
 		# so, run inotifywait once and test if it returns 0
 		#inotifywait -qq --recursive --exclude '.dsink/state' "${source}" 2>/dev/null
 		if $(inotifywait -qq --recursive --exclude '.dsink/state' "${source}" 2>/dev/null); then
-			_debug "${FUNCNAME[0]}: inotifywait returned 0"
+			#_debug "${FUNCNAME[0]}: inotifywait returned 0"
+			:
 		else
 			_debug "${FUNCNAME[0]}: inotifywait encountered an error [$?]"
 			_warn "changemonitor encountered an error and is not running"
