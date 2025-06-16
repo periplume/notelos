@@ -842,7 +842,8 @@ _setViewMode() {
                 
             entity)
                 case "${_viewMode}" in
-                    raw) _nextMode="indexed" ;;
+                    raw) _nextMode="firstline" ;;
+										firstline) _nextMode="indexed" ;;
                     indexed) _nextMode="search" ;;
                     search) _nextMode="raw" ;;
                     *) _nextMode=${_defaultMode} ;; # Invalid current mode
@@ -886,6 +887,15 @@ _setViewMode() {
 			_transform+="+unbind(focus)"
 			_transform+="+unbind(result)"
 			_transform+="+clear-query+first"
+			# mode-specific changes
+			if [[ ${_nextMode} == "firstline" && ${_viewScope} == "entity" ]]; then
+  			# For firstline mode, match against all but the last field (the key)
+				# this means that we must always set it back to (..) with esc, etc
+				_transform+="+change-nth(..-2)" 
+   		else
+				# For other modes (raw, all, indexed, etc.), match on the entire line
+				_transform+="+change-nth(..)" 
+			fi
 		fi
 
 		# return transform string to fzf
@@ -1122,9 +1132,11 @@ _germFZF () {
 		FZF_COMMAND+=(--bind="alt-left:+reload(_loadList)")
 		FZF_COMMAND+=(--bind="alt-left:+transform-header(_setHeader '3:,4:,5:,6:')")
 		FZF_COMMAND+=(--bind="alt-left:+clear-query+first")
+		FZF_COMMAND+=(--bind="alt-left:+change-nth(..)")
 		# alt-right (same as enter)
 		FZF_COMMAND+=(--bind="alt-right:execute(_processEnter {} {q})")
 		FZF_COMMAND+=(--bind="alt-right:+transform(_transformEnter)")
+		FZF_COMMAND+=(--bind="alt-right:+change-nth(..)")
 
 		# delete selected source
 		FZF_COMMAND+=(--bind="ctrl-delete:execute-silent(_EXEdeleteSource {})")
@@ -1243,6 +1255,7 @@ _processEnter () {
 	local _selection=${1:-}
 	local _query=${2:-}
 	local _position=${FZF_POS}
+	local _nth=${FZF_NTH}
 	local _totalcount=${FZF_TOTAL_COUNT}
 	local _matchcount=${FZF_MATCH_COUNT}
 	local _selectcount=${FZF_SELECT_COUNT}
@@ -1345,11 +1358,19 @@ _processEnter () {
 			_nextViewMode=raw
 		# next check if not in search mode
 		else
-			# use seeded trigger, otherwise, use edit
-			_nextAction=${_nextAction:-edit}
-			_nextObject=${_nextObject:-$(_determineSelection "${_selection}" "${_query}")}
-			_nextType=$(_getType "${_nextObject}" "${_viewScope}")
-			_nextContext=${_viewContext}
+    	# _selection will be "Display Name\tActualFilename" in 'firstline' mode
+      # or just "ActualFilename" in 'raw' mode
+      if [[ ${_viewMode} == "firstline" ]]; then
+				_debug "${FUNCNAME[0]}: firstline mode"
+        # Extract the actual filename (second field)
+				IFS=$'\t' read -r _firstLine _file <<< "${_selection}"
+				_debug "SELECTING ${_file}"
+        _nextObject=${_file}
+      fi
+      # use seeded trigger, otherwise, use edit
+      _nextAction=${_nextAction:-edit}
+      _nextType=$(_getType "${_nextObject}" "${_viewScope}") # _viewScope is correct here
+      _nextContext=${_viewContext} # _viewContext is the current source name
 		fi
 	fi
 
@@ -1358,6 +1379,7 @@ _processEnter () {
 	_debug "${FUNCNAME[0]}: fzf selection   : $_selection"
 	_debug "${FUNCNAME[0]}: fzf query       : $_query"
 	_debug "${FUNCNAME[0]}: fzf position    : $_position"
+	_debug "${FUNCNAME[0]}: fzf nth         : $_nth"
 	_debug "${FUNCNAME[0]}: fzf total count : $_totalcount"
 	_debug "${FUNCNAME[0]}: fzf match count : $_matchcount"
 	_debug "${FUNCNAME[0]}: fzf select count: $_selectcount"
@@ -1590,6 +1612,7 @@ _transformReset () {
 	_transform+="+enable-search"
 	_transform+="+change-input-label(search)"
 	_transform+="+reload(_loadList)"
+	_transform+="+change-nth(..)" 
 	_transform+="+clear-query"
 	_transform+="+first"
 	echo ${_transform}
@@ -1748,6 +1771,10 @@ _getType () {
     
     local _selection="${1:-}"
     local _viewContext="${2:-source}"
+		local _viewMode
+		_viewMode=$(_stateRead germFZF/viewMode)
+
+		_debug "${FUNCNAME[0]}: type of ${_selection} in ${_viewContext}"
     
     case "${_viewContext}" in
         "source")
@@ -1764,12 +1791,22 @@ _getType () {
             ;;
             
         "entity")
-            # In entity view, we have both entities and indexes
-            if [[ "${_selection}" =~ ^[[:digit:]]+\.[[:digit:]]+$ ]]; then
-            	echo "entity"
-            else
-            	echo "index"
-            fi
+            # In entity view, the type depends on the viewMode
+						# because we will have index types soon
+            case "${_viewMode}" in
+                "raw")
+                    echo "entity"
+                    ;;
+                "firstline")
+                    echo "entity"
+                    ;;
+                "search")
+                    echo "entity"
+                    ;;
+                *)
+                    echo "unknown"
+                    ;;
+            esac
             ;;
             
         "index")
@@ -1821,61 +1858,86 @@ _loadList() {
 	# arg 1 (optional) view scope (source,entity)
 	# arg 2 (optional) view mode (all,smart, etc)
 	# arg 3 (optional) view context (ie object)
-  local _viewScope=${1:-}
-	local _viewMode=${2:-}
-	local _viewContext${3:-}
+    local _param_viewScope=${1:-}
+    local _param_viewMode=${2:-}
+    local _param_viewContext=${3:-} # Parameter for viewContext
 
-  # determine the current view scope
-  if [[ -z "${_viewScope}" ]]; then
- 		_viewScope=$(_stateRead "germFZF/viewScope") || _viewScope="source"
-  fi
+    local _viewScope
+    local _viewMode
+    local _viewContext
 
-	# determine the view mode
-	if [[ -z "${_viewMode}" ]]; then
-		_viewMode=$(_stateRead "germFZF/viewMode")
-	fi
+    # Determine the current view scope
+    if [[ -n "${_param_viewScope}" ]]; then
+        _viewScope="${_param_viewScope}"
+    else
+        _viewScope=$(_stateRead "germFZF/viewScope") || _viewScope="source"
+    fi
 
-	# determine the view context
-	if [[ -z "${_viewContext}" ]]; then
-		_viewContext=$(_stateRead "germFZF/viewContext")
-	fi
+    # Determine the view mode
+    if [[ -n "${_param_viewMode}" ]]; then
+        _viewMode="${_param_viewMode}"
+    else
+        _viewMode=$(_stateRead "germFZF/viewMode")
+    fi
 
-	_debug "${FUNCNAME[0]}: view scope    : ${_viewScope}"
-	_debug "${FUNCNAME[0]}: view mode     : ${_viewMode}"
-	_debug "${FUNCNAME[0]}: view context  : ${_viewContext}"
+    # Determine the view context
+    if [[ -n "${_param_viewContext}" ]]; then
+        _viewContext="${_param_viewContext}"
+    else
+        _viewContext=$(_stateRead "germFZF/viewContext")
+    fi
 
-	# use view context
-	case "${_viewScope}" in
-		"source")
-			# check viewMode.
-			if [[ ${_viewMode} == "search" ]]; then
-				local _query=${FZF_QUERY:-'.'}
-				local _sort
-				_isSearchReversed && _sort="sort -r" || _sort="sort"
-				rg --color=always --line-number --no-heading --smart-case \
-					--glob=!.*/ "${_query}" * | $_sort || true
-			else
-				ls "${_HOME}"
-			fi
-			;;
-		"entity")
-			if [[ ${_viewMode} == "search" ]]; then
-				# set the empty query to "." to cause rg to match everything
-				local _query=${FZF_QUERY:-'.'}
-				local _sort
-				_isSearchReversed && _sort="sort -r" || _sort="sort"
-				rg --color=always --line-number --no-heading --smart-case \
-					--glob=!.*/ "${_query}" ${_viewContext} | $_sort || true
-			elif [[ ${_viewMode} == "raw" ]]; then
-				# just print the contents with ls
-				ls "${_viewContext}"
-			elif [[ ${_viewMode} == "indexed" ]]; then
-				# print what it should look like
-				echo -e "1 mock first line	filename\n2 mock 2nd line	file2"
-			fi
-			#_getEntityList "${_viewMode}" "${_viewContext}"
-			;;
-	esac
+    _debug "${FUNCNAME[0]}: view scope    : ${_viewScope}"
+    _debug "${FUNCNAME[0]}: view mode     : ${_viewMode}"
+    _debug "${FUNCNAME[0]}: view context  : ${_viewContext}"
+
+    local _generatedListOutput
+
+    # Capture the output of the list generation logic
+    _generatedListOutput=$(
+        case "${_viewScope}" in
+            "source")
+                if [[ ${_viewMode} == "search" ]]; then
+                    local _query=${FZF_QUERY:-'.'}
+                    # rg output will be sorted externally
+                    rg --color=always --line-number --no-heading --smart-case \
+                        --glob=!.*/ "${_query}" * || true
+                else # "all" mode
+                    ls "${_HOME}"
+                fi
+                ;;
+            "entity")
+                if [[ ${_viewMode} == "search" ]]; then
+                    local _query=${FZF_QUERY:-'.'}
+                    # rg output will be sorted externally
+                    rg --color=always --line-number --no-heading --smart-case \
+                        --glob=!.*/ "${_query}" "${_viewContext}" || true
+                elif [[ ${_viewMode} == "raw" ]]; then
+                    ls "${_viewContext}"
+                elif [[ ${_viewMode} == "firstline" ]]; then
+                    local _entityFile
+                    # The find | sort -z is for processing order of files before _getEntityFirstLine.
+                    # The final display sort (normal or reversed) is handled externally.
+                    find "${_viewContext}" -mindepth 1 -maxdepth 1 -type f -not -name ".*" -print0 | sort -z | while IFS= read -r -d $'\0' _entityPath; do
+                        _entityFile=$(basename "${_entityPath}")
+                        _getEntityFirstLine "$(basename "${_viewContext}")" "${_entityFile}"
+                    done
+                elif [[ ${_viewMode} == "indexed" ]]; then
+                    # This output will also be sorted externally
+                    echo -e "1 mock first line\tfilename\n2 mock 2nd line\tfile2"
+                fi
+                ;;
+        esac
+    )
+
+    # Apply final sorting based on _isSearchReversed
+    if [[ -n "${_generatedListOutput}" ]]; then
+        if _isSearchReversed; then
+            echo "${_generatedListOutput}" | sort -r
+        else
+            echo "${_generatedListOutput}" | sort # Apply a default sort if not reversed
+        fi
+    fi
 }
 export -f _loadList
 
@@ -1911,6 +1973,38 @@ _getEntityList() {
 }
 export -f _getEntityList
 
+_getEntityFirstLine() {
+    # $1: source name
+    # $2: entity timestamp filename
+    # Outputs: "Display Name (first line or truncated)\tActualFilename"
+    # or just "ActualFilename" if file issues or empty first line.
+    local _sourceName="${1}"
+    local _entityFilename="${2}"
+    local _filePath="${_HOME}/${_sourceName}/${_entityFilename}"
+    local _firstLineDisplay
+    local _maxDisplayLength=70 # Max length for the first line display
+
+    if [[ -f "${_filePath}" ]]; then
+        # Read the first non-empty line
+        _firstLineDisplay=$(grep -m 1 '[^[:space:]]' "${_filePath}" || true)
+        # Trim leading/trailing whitespace
+        _firstLineDisplay="${_firstLineDisplay#"${_firstLineDisplay%%[![:space:]]*}"}"
+        _firstLineDisplay="${_firstLineDisplay%"${_firstLineDisplay##*[![:space:]]}"}"
+        
+        if [[ -z "${_firstLineDisplay}" ]]; then
+            # If first line is empty, use filename as display
+            _firstLineDisplay="${_entityFilename}"
+        elif [[ ${#_firstLineDisplay} -gt ${_maxDisplayLength} ]]; then
+            # Truncate if too long
+            _firstLineDisplay="${_firstLineDisplay:0:$((_maxDisplayLength-3))}..."
+        fi
+        echo -e "${_firstLineDisplay}\t${_entityFilename}"
+    else
+        # Fallback if file not found or other issues
+        echo -e "${_entityFilename}\t${_entityFilename}"
+    fi
+}
+export -f _getEntityFirstLine
 
 
 ##################################################################
@@ -2143,12 +2237,19 @@ _preview () {
 	# to use query as a search term in the preview window
 	# requires disable-search activated by alt-Q
 	# if view context is entity, query triggers search within source
-	elif [[ ${_viewScope} == "entity" && ${_viewMode} != "search" ]]; then
-		if [[ -z $2 ]]; then
-			_previewEntity ${1:-null} ${2:-null} ${_viewContext}
-		else
-			_previewEntity ${1:-null} ${2:-null} ${_viewContext} | sed "s/${2}/$(printf '\033[1;31m&\033[0m')/g"
-		fi
+  elif [[ ${_viewScope} == "entity" && ${_viewMode} != "search" ]]; then
+    local _actualFileToPreview="${_selection}"
+    if [[ ${_viewMode} == "firstline" ]]; then
+       # _selection is "Display Name\tActualFilename"
+       _actualFileToPreview=$(echo -e "${_selection}" | cut -f2 -d$'\t')
+       [[ -z "${_actualFileToPreview}" || "${_actualFileToPreview}" == "${_selection}" ]] && _actualFileToPreview="${_selection}"
+    fi
+
+    if [[ -z $2 ]]; then # $2 is _query
+      _previewEntity "${_actualFileToPreview}" "" "${_viewContext}"
+    else
+      _previewEntity "${_actualFileToPreview}" "${_query}" "${_viewContext}" | sed "s/${_query}/$(printf '\033[1;31m&\033[0m')/g"
+    fi
 
 	# in search mode
 	elif [[ ${_viewScope} == "entity" && ${_viewMode} == "search" ]]; then
