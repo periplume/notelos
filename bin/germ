@@ -782,22 +782,22 @@ export -f _getSourceCount
 ################
 
 _createNewIndex() {
-    local _viewScope=$(_stateRead germFZF/viewScope)
-    local _viewMode=$(_stateRead germFZF/viewMode)
-    local _transform
+		local _viewScope=$(_stateRead germFZF/viewScope)
+		local _viewMode=$(_stateRead germFZF/viewMode)
+		local _transform
 
-    # Only allow in entity/index mode
-    if [[ "${_viewScope}" == "entity" && "${_viewMode}" == "index" ]]; then
-        _transform+="+execute-silent(_stateSet germFZF/nextAction new-index)"
-        _transform+="+change-input-label(new index name:)"
-        _transform+="+change-ghost(type new index name)"
-        _transform+="+transform-header(_setHeader '3:create new index')"
-        _transform+="+clear-query"
-    else
-        _transform+="+transform-header(_setHeader '6:only in index mode')"
-    fi
+		# Only allow in entity/index mode
+		if [[ "${_viewScope}" == "entity" && "${_viewMode}" == "index" ]]; then
+				_transform+="+execute-silent(_stateSet germFZF/nextAction new-index)"
+				_transform+="+change-input-label(new index name:)"
+				_transform+="+change-ghost(type new index name)"
+				_transform+="+transform-header(_setHeader '3:create new index')"
+				_transform+="+clear-query"
+		else
+				_transform+="+transform-header(_setHeader '6:only in index mode')"
+		fi
 
-    echo "${_transform}"
+		echo "${_transform}"
 }
 export -f _createNewIndex
 
@@ -1407,6 +1407,7 @@ _processEnter () {
 			fi
 			# use seeded trigger, otherwise, use edit
 			_nextAction=${_nextAction:-edit}
+			_nextObject=${_nextObject:-$(_determineSelection "${_selection}" "${_query}")}
 			_nextType=$(_getType "${_nextObject}" "${_viewScope}") # _viewScope is correct here
 			_nextContext=${_viewContext} # _viewContext is the current source name
 		fi
@@ -1505,6 +1506,31 @@ _processEnter () {
 							_stateSet germFZF/headerLines/6 "failed create!"
 							;;
 					esac
+				fi
+				;;
+
+			new-index)
+				# Only allow in entity/index mode
+				if [[ ${_viewScope} == "entity" && ${_viewMode} == "index" ]]; then
+					local _indexName="${_query}"
+					local _indexDir="${_HOME}/${_viewContext}/.index"
+					local _indexFile="${_indexDir}/${_indexName}.json"
+					# Validate name
+					if ! _isNameValid "${_indexName}"; then
+						_stateSet germFZF/headerLines/6 "invalid index name"
+						return
+					fi
+					# Check for existence
+					mkdir -p "${_indexDir}"
+					if [[ -e "${_indexFile}" ]]; then
+						_stateSet germFZF/headerLines/6 "index exists"
+						return
+					fi
+					# Create empty index file
+					echo "[]" > "${_indexFile}"
+					_stateSet germFZF/headerLines/4 "index '${_indexName}' created"
+				else
+					_stateSet germFZF/headerLines/6 "not in index mode"
 				fi
 				;;
 
