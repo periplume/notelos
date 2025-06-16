@@ -50,7 +50,7 @@ _fLOG
 ####################################
 
 _printUsage () {
-  cat << EOF
+	cat << EOF
 usage: germ [OPTIONS] <command> [OPTIONS]
 
 options:
@@ -85,7 +85,7 @@ EOF
 }
 
 _printInfo () {
-  cat << EOF
+	cat << EOF
 germ takes simple notes and adds them to a git repo
 EOF
 }
@@ -105,10 +105,10 @@ _getOpts () {
 		local _commandList
 		_commandList=$(_printCommands | cut -f2 -d' ')
 		for _command in ${_commandList}; do
-      [[ "${_command}" = "${1}" ]] && _allowed=false 
-    done
-    [[ ${_allowed} = "true" ]] || return 1
-  }
+			[[ "${_command}" = "${1}" ]] && _allowed=false 
+		done
+		[[ ${_allowed} = "true" ]] || return 1
+	}
 	while getopts ":hsdlxtva:p:" flag ; do
 		case ${flag} in 
 			h)
@@ -125,9 +125,9 @@ _getOpts () {
 				_BASE=${OPTARG}
 				_warn "using alt path '${_BASE}'"
 				;;
- 	    s)
+ 			s)
 				_debug "${FUNCNAME[0]}: enabling silent mode with flag -$flag"
- 	      _SILENT=true
+ 				_SILENT=true
 				;;
 			d)
 				_debug "${FUNCNAME[0]}: enabled debug mode with flag -$flag"
@@ -138,9 +138,9 @@ _getOpts () {
 				_LOG=true
 				;;
 			x)
-        _debug "${FUNCNAME[0]}: running in standalone mode with -$flag"
-        _MODE=standalone
-        ;;
+				_debug "${FUNCNAME[0]}: running in standalone mode with -$flag"
+				_MODE=standalone
+				;;
 			t)
 				_debug "${FUNCNAME[0]}: running experimental TUI mode"
 				_TUI=true
@@ -225,12 +225,12 @@ _getOpts () {
 }
 
 _setEnv() {
-  # get the name and absolute path of the calling script
-  _selfNAME=$(basename "${BASH_SOURCE[0]}")
-  _selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
-  _selfBASE=$(dirname "${_selfABSOLUTE}")
-  _selfCALL=${0}
-  _selfPWD=$(pwd)
+	# get the name and absolute path of the calling script
+	_selfNAME=$(basename "${BASH_SOURCE[0]}")
+	_selfABSOLUTE=$(readlink -f "${BASH_SOURCE[0]}")
+	_selfBASE=$(dirname "${_selfABSOLUTE}")
+	_selfCALL=${0}
+	_selfPWD=$(pwd)
 	# determine mode (notelos-integrated or standalone)
 	[[ -n "${_notelosHOME+x}" && ${_MODE:-} != "standalone" ]] && _MODE=integrated || _MODE=standalone
 	# note: the -x switch overrides the global _notelosHOME var 
@@ -268,7 +268,7 @@ _setEnv() {
 		_USEREMAIL="unknown"
 		_EDITOR=${EDITOR:-nano}
 	fi
-  [[ -f "${_LOGFILE:-}" ]] && _LOGGING=true || _LOGGING=false
+	[[ -f "${_LOGFILE:-}" ]] && _LOGGING=true || _LOGGING=false
 	_debug "$(declare -p _MODE)"
 	_debug "$(declare -p _MASTER)"
 	_debug "$(declare -p _NAME)"
@@ -306,42 +306,42 @@ _checkExternalTools() {
 }
 
 _checkHome() {
-  # check if the home dir exists
-  # check if it is a germ-created git
-  # return 1 if missing or not git
-  # mind condition: if subcommand is create
+	# check if the home dir exists
+	# check if it is a germ-created git
+	# return 1 if missing or not git
+	# mind condition: if subcommand is create
 	[[ ! -d "${_BASE}" && ${_MODE} = "notelos" ]] && { _error "notelos base not found"; exit 1; }
 	[[ -d "${_BASE}" ]] || { _error "base '${_BASE}' does not exist"; exit 1; }
 	local _base="${_BASE}"
 	local _dirName="${_NAME}"
 	local _dirPath="${_HOME}"
 	local _git_desc="${_dirPath}/.git/description"
-  if [ -d "${_dirPath}" ]; then
-    if [ -f "${_git_desc}" ]; then
-      # the git description file exists, lets check it for our marker
-      read -r _desc < "${_git_desc}"
+	if [ -d "${_dirPath}" ]; then
+		if [ -f "${_git_desc}" ]; then
+			# the git description file exists, lets check it for our marker
+			read -r _desc < "${_git_desc}"
 			if [[ ${_desc} == ${_MASTER}:${_NAME}:${_USERNAME}* ]]; then
-        # if repo does exist, return 0
-        _debug "${_git_desc} = ${_desc}"
-      else
-        # if repo does not exist, warn and exit
-        _error "${_dirPath} exists and is NOT a studio-created repo"
-        return 1
-      fi
-    else
-      _error "${_dirPath} exists and is NOT a git repo"
-      _error "move existing ${_dirPath} before proceeding"
-      return 1
-    fi
-  else
-    # dir does not exist
-    _warn "'${_dirPath}' does not exist"
-    read -rsn1 -p "$(_ask 'create repo now? [y/n]')" _yn
-    echo
-    [[ ${_yn} != "y" ]] && { _warn "cannot run without a repo"; return 1;  }
-    _create || { _error "could not create ${_dirName} repo"; return 1; }
-    return
-  fi
+				# if repo does exist, return 0
+				_debug "${_git_desc} = ${_desc}"
+			else
+				# if repo does not exist, warn and exit
+				_error "${_dirPath} exists and is NOT a studio-created repo"
+				return 1
+			fi
+		else
+			_error "${_dirPath} exists and is NOT a git repo"
+			_error "move existing ${_dirPath} before proceeding"
+			return 1
+		fi
+	else
+		# dir does not exist
+		_warn "'${_dirPath}' does not exist"
+		read -rsn1 -p "$(_ask 'create repo now? [y/n]')" _yn
+		echo
+		[[ ${_yn} != "y" ]] && { _warn "cannot run without a repo"; return 1;  }
+		_create || { _error "could not create ${_dirName} repo"; return 1; }
+		return
+	fi
 }
 
 ############################
@@ -353,20 +353,20 @@ _create() {
 	[[ -d "${_HOME}" ]] && { _error "'${_HOME}' exists"; return 1; }
 	[ ! -d "${_HOME}" ] && mkdir "${_HOME}"
 	git init -q -b main "${_HOME}"
-  git -C "${_HOME}" config user.name "${_USERNAME}"
-  git -C "${_HOME}" config user.email "${_USEREMAIL}"
+	git -C "${_HOME}" config user.name "${_USERNAME}"
+	git -C "${_HOME}" config user.email "${_USEREMAIL}"
 	# make the default notebook (aka "source")
 	mkdir "${_HOME}/default"
 	echo "default source (notebook, project, etc)" > "${_HOME}/default/.description"
 	echo ".state" >> "${_HOME}/.gitignore"
 	echo ".${_NAME}_history" >> "${_HOME}/.gitignore"
-  git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
-  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/default/.description" 
-  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
+	git -C "${_HOME}" --git-dir="${_GITDIR}" add .gitignore
+	git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/default/.description" 
+	git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[genesis] ${_NAME} created by ${_USERNAME}"
 	# put the installed signature in git description file
-  _gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
-  _time=$(date +%s)
-  printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" >      "${_HOME}/.git/description"
+	_gitInitial=$(git -C "${_HOME}" rev-parse --short --verify main)
+	_time=$(date +%s)
+	printf "${_MASTER}:${_NAME}:${_USERNAME}:${_time}:${_gitInitial}\n" >      "${_HOME}/.git/description"
 }
 
 ##################################
@@ -383,48 +383,48 @@ _inspect() {
 
 _pageSource() {
 	exec 2>>/tmp/fzf.debug
-  # Function to read all files in a source directory with pager
-  # arg 1: source directory name
-  local _source=${1}
-  local _files=()
-  local _tempFile
-  local _oldTerm
-  
-  # Change terminal settings
-  _oldTerm=$(stty -g)
-  stty sane
-  clear
-  
-  # Get all files in source directory (excluding hidden files)
-  while IFS= read -r -d '' file; do
-    _files+=("$file")
-  done < <(find "${_HOME}/${_source}" -mindepth 1 -maxdepth 1 -type f -not -path "*/\.*" -print0 | sort -z)
-  
-  if [[ ${#_files[@]} -eq 0 ]]; then
-    echo "No files found in source '${_source}'"
-    read -n 1 -p "Press any key to continue..."
-    stty "${_oldTerm}"
-    return
-  fi
-  
-  # Create a temporary file with all contents concatenated
-  _tempFile=$(mktemp)
-  
-  # Add file contents to temp file with headers
-  for file in "${_files[@]}"; do
-    filename=$(basename "$file")
-    echo -e "\n\033[1;33m======== ${filename} ========\033[0m\n" >> "${_tempFile}"
-    sed 's/^/     /' "$file" >> "${_tempFile}"
-    echo -e "\n\033[1;33m======== END ${filename} ========\033[0m\n" >> "${_tempFile}"
-  done
-  
-  # Page through the combined file
-  less -Ps"${_source} [${#_files[@]} files]  [ n:next file p:prev file ]  [ q:quit ]" \
-       --pattern="^======== " -N --use-color "${_tempFile}"
-  
-  # Clean up and restore terminal
-  rm "${_tempFile}"
-  stty "${_oldTerm}"
+	# Function to read all files in a source directory with pager
+	# arg 1: source directory name
+	local _source=${1}
+	local _files=()
+	local _tempFile
+	local _oldTerm
+	
+	# Change terminal settings
+	_oldTerm=$(stty -g)
+	stty sane
+	clear
+	
+	# Get all files in source directory (excluding hidden files)
+	while IFS= read -r -d '' file; do
+		_files+=("$file")
+	done < <(find "${_HOME}/${_source}" -mindepth 1 -maxdepth 1 -type f -not -path "*/\.*" -print0 | sort -z)
+	
+	if [[ ${#_files[@]} -eq 0 ]]; then
+		echo "No files found in source '${_source}'"
+		read -n 1 -p "Press any key to continue..."
+		stty "${_oldTerm}"
+		return
+	fi
+	
+	# Create a temporary file with all contents concatenated
+	_tempFile=$(mktemp)
+	
+	# Add file contents to temp file with headers
+	for file in "${_files[@]}"; do
+		filename=$(basename "$file")
+		echo -e "\n\033[1;33m======== ${filename} ========\033[0m\n" >> "${_tempFile}"
+		sed 's/^/     /' "$file" >> "${_tempFile}"
+		echo -e "\n\033[1;33m======== END ${filename} ========\033[0m\n" >> "${_tempFile}"
+	done
+	
+	# Page through the combined file
+	less -Ps"${_source} [${#_files[@]} files]  [ n:next file p:prev file ]  [ q:quit ]" \
+			 --pattern="^======== " -N --use-color "${_tempFile}"
+	
+	# Clean up and restore terminal
+	rm "${_tempFile}"
+	stty "${_oldTerm}"
 }
 export -f _pageSource
 
@@ -440,9 +440,9 @@ _pager () {
 
 	# if $2 was not passed, we need a list of files
 	if [[ -z "${_file}" ]]; then
-    while IFS= read -r -d '' file; do
-      _fileList+=("${file}")
-    done < <(find "${_source}" -maxdepth 1 -type f -not -name ".*" -print0 | sort -z)
+		while IFS= read -r -d '' file; do
+			_fileList+=("${file}")
+		done < <(find "${_source}" -maxdepth 1 -type f -not -name ".*" -print0 | sort -z)
 	else
 		# otherwise just add the one
 		_fileList+=("${_source}/${_file}")
@@ -516,7 +516,7 @@ _editEntity () {
 	${_EDITOR} "${_HOME}/${_current}/${_file}" ${_line:-1} ${_mode:-}
 							
 	# check for changes
-  if git -C "${_HOME}" --git-dir="${_GITDIR}" diff --quiet --exit-code "${_HOME}/${_current}/${_file}"; then
+	if git -C "${_HOME}" --git-dir="${_GITDIR}" diff --quiet --exit-code "${_HOME}/${_current}/${_file}"; then
 		return 2
 	fi
 
@@ -677,13 +677,13 @@ export -f _buildCommitMsg
 _doCommit() {
 	_newFile="${1}"
 	_commitMsg="${2}"
-  git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_newFile}"  
-  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "${_commitMsg}"
+	git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_newFile}"  
+	git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "${_commitMsg}"
 }
 export -f _doCommit
 
 ################
-# INDEX
+# GIT
 ################
 
 _isIndexClean() {
@@ -716,31 +716,31 @@ _doesSourceExist() {
 export -f _doesSourceExist
 
 _doesNameExist () {
-    # Check if the name exists by type (source, index, set)
-    # $1 = name type (source, index, set)
-    # $2 = name to check
-    # Return 0 if true (exists), 1 if false (does not exist)
+		# Check if the name exists by type (source, index, set)
+		# $1 = name type (source, index, set)
+		# $2 = name to check
+		# Return 0 if true (exists), 1 if false (does not exist)
 
-    local _nameType=${1}
-    local _name=${2}
+		local _nameType=${1}
+		local _name=${2}
 
-    case "${_nameType}" in
-        source)
-            # Check if the source directory exists
-            [[ -d "${_HOME}/${_name}" ]] && return 0 || return 1
-            ;;
-        index)
-            # Check if the index directory exists for the current source
-            local _currentSource=$(_getSource)
-            local _indexDir="${_HOME}/${_currentSource}/.index/${_name}"
-            [[ -d "${_indexDir}" ]] && return 0 || return 1
-            ;;
-        *)
-            # Invalid name type
-            _error "Invalid name type: '${_nameType}'"
-            return 1
-            ;;
-    esac
+		case "${_nameType}" in
+				source)
+						# Check if the source directory exists
+						[[ -d "${_HOME}/${_name}" ]] && return 0 || return 1
+						;;
+				index)
+						# Check if the index directory exists for the current source
+						local _currentSource=$(_getSource)
+						local _indexDir="${_HOME}/${_currentSource}/.index/${_name}"
+						[[ -d "${_indexDir}" ]] && return 0 || return 1
+						;;
+				*)
+						# Invalid name type
+						_error "Invalid name type: '${_nameType}'"
+						return 1
+						;;
+		esac
 }
 export -f _doesNameExist
 
@@ -777,129 +777,163 @@ _getSourceCount() {
 }
 export -f _getSourceCount
 
-_setViewMode() {
-    # $1 sets view mode explicitly (optional)
-    # $1 "toggle-search" toggles between search and default
-    # With no arg, cycles to next valid mode
-    
-    local _viewScope
-    local _viewMode
-    local _nextMode
+################
+# ENTITY INDEX
+################
+
+_createNewIndex() {
+    local _viewScope=$(_stateRead germFZF/viewScope)
+    local _viewMode=$(_stateRead germFZF/viewMode)
     local _transform
 
-    # Get the current view scope and mode
-    _viewScope=$(_stateRead "germFZF/viewScope")
-    _viewMode=$(_stateRead "germFZF/viewMode")
-    
-    # Define default mode for each scope
-    local _defaultMode
-    case "${_viewScope}" in
-        source) _defaultMode="all" ;;
-        entity) _defaultMode="raw" ;;
-    esac
-    
-    # Process the input argument
-    if [[ -n ${1} ]]; then
-        _nextMode=${1}
-        
-        # Handle toggle-search special case
-        if [[ ${_nextMode} == "toggle-search" ]]; then
-            if [[ ${_viewMode} == "search" ]]; then
-                _nextMode=${_defaultMode}
-            else
-                _nextMode="search"
-            fi
-        else
-            # Validate explicit mode
-            case "${_viewScope}" in
-                source)
-                    case "${_nextMode}" in
-                        all|search) ;; # Valid modes
-                        *) _nextMode=${_defaultMode} ;; # Invalid, use default
-                    esac
-                    ;;
-                entity)
-                    case "${_nextMode}" in
-                        raw|indexed|search) ;; # Valid modes
-                        *) _nextMode=${_defaultMode} ;; # Invalid, use default
-                    esac
-                    ;;
-                *)
-                    _nextMode=${_defaultMode} # Unknown scope, use default
-                    ;;
-            esac
-        fi
+    # Only allow in entity/index mode
+    if [[ "${_viewScope}" == "entity" && "${_viewMode}" == "index" ]]; then
+        _transform+="+execute-silent(_stateSet germFZF/nextAction new-index)"
+        _transform+="+change-input-label(new index name:)"
+        _transform+="+change-ghost(type new index name)"
+        _transform+="+transform-header(_setHeader '3:create new index')"
+        _transform+="+clear-query"
     else
-        # No argument - cycle to next mode
-        case "${_viewScope}" in
-            source)
-                case "${_viewMode}" in
-                    all) _nextMode="search" ;;
-                    search) _nextMode="all" ;;
-                    *) _nextMode=${_defaultMode} ;; # Invalid current mode
-                esac
-                ;;
-                
-            entity)
-                case "${_viewMode}" in
-                    raw) _nextMode="firstline" ;;
-										firstline) _nextMode="indexed" ;;
-                    indexed) _nextMode="search" ;;
-                    search) _nextMode="raw" ;;
-                    *) _nextMode=${_defaultMode} ;; # Invalid current mode
-                esac
-                ;;
-                
-            *)
-                _nextMode=${_defaultMode} # Unknown scope
-                ;;
-        esac
+        _transform+="+transform-header(_setHeader '6:only in index mode')"
     fi
-    
-    # update the state
-    _stateSet "germFZF/viewMode" "${_nextMode}"
 
-    # construct the correct mode settings
-		if [[ ${_nextMode} == "search" ]]; then
-			_stateSet germFZF/headerLines/4 "search-mode on"
-			_stateSet germFZF/headerLines/3 "ctrl-s search off"
-			_transform+="disable-search"
-			_transform+="+change-ghost(type to search)"
-			_transform+="+change-preview-label(searching: )"
-			_transform+="+rebind(change)"
-			_transform+="+rebind(focus)"
-			_transform+="+rebind(result)"
-			_transform+="+reload(_loadList)"
-			_transform+="+transform-header(_setHeader)"
-    	_transform+="+transform-list-label(_printListLabel)"
-			# put the preview-window adjustment in change and focus bindings
-		else
-			_stateSet germFZF/headerLines/4
-			_stateSet germFZF/headerLines/3
-			_transform+="+enable-search"
-			_transform+="+change-ghost()"
-			_transform+="+change-preview-window()"
-			_transform+="+change-preview-label()"
-			_transform+="+reload(_loadList)"
-			_transform+="+transform-header(_setHeader)"
-    	_transform+="+transform-list-label(_printListLabel)"
-			_transform+="+unbind(change)"
-			_transform+="+unbind(focus)"
-			_transform+="+unbind(result)"
-			_transform+="+clear-query+first"
-			# mode-specific changes
-			if [[ ${_nextMode} == "firstline" && ${_viewScope} == "entity" ]]; then
-  			# For firstline mode, match against all but the last field (the key)
-				# this means that we must always set it back to (..) with esc, etc
-				_transform+="+change-nth(..-2)" 
-   		else
-				# For other modes (raw, all, indexed, etc.), match on the entire line
-				_transform+="+change-nth(..)" 
-			fi
-		fi
-
-		# return transform string to fzf
     echo "${_transform}"
+}
+export -f _createNewIndex
+
+
+_setViewMode() {
+	# $1 sets view mode explicitly (optional)
+	# $2 "toggle-search" toggles between search and default
+	# $2 "toggle-index" toggles between index and default
+	# With no arg, cycles to next valid mode
+	
+	local _viewScope
+	local _viewMode
+	local _nextMode
+	local _transform
+
+	# Get the current view scope and mode
+	_viewScope=$(_stateRead "germFZF/viewScope")
+	_viewMode=$(_stateRead "germFZF/viewMode")
+		
+	# Define default mode for each scope
+	local _defaultMode
+	case "${_viewScope}" in
+		source) _defaultMode="all" ;;
+		entity) _defaultMode="raw" ;;
+	esac
+		
+	# Process the input argument
+	if [[ -n ${1} ]]; then
+		_nextMode=${1}
+
+		# Handle toggle-search special toggle case (triggered by ctrl-s)
+		if [[ ${_nextMode} == "toggle-search" ]]; then
+			if [[ ${_viewMode} == "search" ]]; then
+				_nextMode=${_defaultMode}
+			else
+				_nextMode="search"
+			fi
+		# handle toggle-index special toggle case (triggered by ctrl-i)
+		# only applies in entity viewContext
+		elif [[ ${_nextMode} == "toggle-index" && ${_viewScope} == "entity" ]]; then
+			if [[ ${_viewMode} == "index" ]]; then
+				_nextMode=${_defaultMode}
+			else
+				_nextMode="index"
+			fi
+
+		else
+			# Validate explicit mode
+			case "${_viewScope}" in
+				source)
+					case "${_nextMode}" in
+						all|search) ;; # Valid modes
+						*) _nextMode=${_defaultMode} ;; # Invalid, use default
+					esac
+					;;
+				entity)
+					case "${_nextMode}" in
+						raw|index|search) ;; # Valid modes
+						*) _nextMode=${_defaultMode} ;; # Invalid, use default
+					esac
+					;;
+				*)
+					_nextMode=${_defaultMode} # Unknown scope, use default
+					;;
+			esac
+		fi
+	# No argument - cycle to next mode
+	else
+		case "${_viewScope}" in
+			source)
+				case "${_viewMode}" in
+					all) _nextMode="search" ;;
+					search) _nextMode="all" ;;
+					*) _nextMode=${_defaultMode} ;; # Invalid current mode
+				esac
+				;;
+
+			entity)
+				case "${_viewMode}" in
+					raw) _nextMode="firstline" ;;
+					firstline) _nextMode="index" ;;
+					index) _nextMode="search" ;;
+					search) _nextMode="raw" ;;
+					*) _nextMode=${_defaultMode} ;; # Invalid current mode
+				esac
+				;;
+			*)
+				_nextMode=${_defaultMode} # Unknown scope
+				;;
+		esac
+	fi
+
+	# update the state
+	_stateSet "germFZF/viewMode" "${_nextMode}"
+
+	# construct the correct mode settings
+	if [[ ${_nextMode} == "search" ]]; then
+		_stateSet germFZF/headerLines/4 "search-mode on"
+		_stateSet germFZF/headerLines/3 "ctrl-s search off"
+		_transform+="disable-search"
+		_transform+="+change-ghost(type to search)"
+		_transform+="+change-preview-label(searching: )"
+		_transform+="+rebind(change)"
+		_transform+="+rebind(focus)"
+		_transform+="+rebind(result)"
+		_transform+="+reload(_loadList)"
+		_transform+="+transform-header(_setHeader)"
+		_transform+="+transform-list-label(_printListLabel)"
+		# put the preview-window adjustment in change and focus bindings
+	else
+		_stateSet germFZF/headerLines/4
+		_stateSet germFZF/headerLines/3
+		_transform+="+enable-search"
+		_transform+="+change-ghost()"
+		_transform+="+change-preview-window()"
+		_transform+="+change-preview-label()"
+		_transform+="+reload(_loadList)"
+		_transform+="+transform-header(_setHeader)"
+		_transform+="+transform-list-label(_printListLabel)"
+		_transform+="+unbind(change)"
+		_transform+="+unbind(focus)"
+		_transform+="+unbind(result)"
+		_transform+="+clear-query+first"
+		# mode-specific changes
+		if [[ ${_nextMode} == "firstline" && ${_viewScope} == "entity" ]]; then
+			# For firstline mode, match against all but the last field (the key)
+			# this means that we must always set it back to (..) with esc, etc
+			_transform+="+change-nth(..-2)" 
+ 		else
+			# For other modes (raw, all, index, etc.), match on the entire line
+			_transform+="+change-nth(..)" 
+		fi
+	fi
+
+	# return transform string to fzf
+	echo "${_transform}"
 }
 export -f _setViewMode
 
@@ -930,7 +964,7 @@ _XsetViewMode() {
 
 	local _viewScope
 	local _viewMode
-  local _nextState
+	local _nextState
 	local _transform
 
 	# get the current view scope
@@ -991,11 +1025,11 @@ _XsetViewMode() {
 					;;
 			esac
 			;;
-    esac
+		esac
 	fi
-  
+	
 	# Update the state using _stateSet
-  _stateSet "germFZF/viewMode" "${_nextState}"
+	_stateSet "germFZF/viewMode" "${_nextState}"
 
 	# trigger searchmode check
 	#_transform+="transform(_searchMode {})"
@@ -1048,10 +1082,10 @@ _germFZF () {
 		mkdir -p "${_HOME}/.state/germFZF" 
 	fi
 	# set up the defaults
-  _viewScope=$(_stateRead "germFZF/viewScope") || _viewScope="source"
-  _stateSet "germFZF/viewScope" "$_viewScope"
-  _viewMode=$(_stateRead "germFZF/viewMode") || _viewMode="all"
-  _stateSet "germFZF/viewMode" "$_viewMode"
+	_viewScope=$(_stateRead "germFZF/viewScope") || _viewScope="source"
+	_stateSet "germFZF/viewScope" "$_viewScope"
+	_viewMode=$(_stateRead "germFZF/viewMode") || _viewMode="all"
+	_stateSet "germFZF/viewMode" "$_viewMode"
 
 	# run the fzf loop, building the fzf command with an array
 	while true; do
@@ -1183,7 +1217,6 @@ _germFZF () {
 		FZF_COMMAND+=(--bind="ctrl-alt-s:+execute-silent(_toggleSearchMode)")
 		FZF_COMMAND+=(--bind="ctrl-alt-s:+transform(_searchGroup {+} {q})+clear-query")
 
-
 		# ctrl-v cycles the view mode
 		FZF_COMMAND+=(--bind="ctrl-v:transform(_setViewMode)")
 		
@@ -1204,6 +1237,11 @@ _germFZF () {
 		# result updates the preview offset
 		FZF_COMMAND+=(--bind="result:+transform(_searchCenterPreviewWindow {})+refresh-preview")
 		FZF_COMMAND+=(--bind="start:+unbind(result)")
+
+		# ctrl-i toggles index mode on/off
+		FZF_COMMAND+=(--bind="ctrl-i:transform(_setViewMode toggle-index)")
+		# alt-I creates a new index
+		FZF_COMMAND+=(--bind="alt-I:transform(_createNewIndex)")
 
 		# help (toggles preview)
 		FZF_COMMAND+=(--bind="?:change-preview(_previewHelp)")
@@ -1358,19 +1396,19 @@ _processEnter () {
 			_nextViewMode=raw
 		# next check if not in search mode
 		else
-    	# _selection will be "Display Name\tActualFilename" in 'firstline' mode
-      # or just "ActualFilename" in 'raw' mode
-      if [[ ${_viewMode} == "firstline" ]]; then
+			# _selection will be "Display Name\tActualFilename" in 'firstline' mode
+			# or just "ActualFilename" in 'raw' mode
+			if [[ ${_viewMode} == "firstline" ]]; then
 				_debug "${FUNCNAME[0]}: firstline mode"
-        # Extract the actual filename (second field)
+				# Extract the actual filename (second field)
 				IFS=$'\t' read -r _firstLine _file <<< "${_selection}"
 				_debug "SELECTING ${_file}"
-        _nextObject=${_file}
-      fi
-      # use seeded trigger, otherwise, use edit
-      _nextAction=${_nextAction:-edit}
-      _nextType=$(_getType "${_nextObject}" "${_viewScope}") # _viewScope is correct here
-      _nextContext=${_viewContext} # _viewContext is the current source name
+				_nextObject=${_file}
+			fi
+			# use seeded trigger, otherwise, use edit
+			_nextAction=${_nextAction:-edit}
+			_nextType=$(_getType "${_nextObject}" "${_viewScope}") # _viewScope is correct here
+			_nextContext=${_viewContext} # _viewContext is the current source name
 		fi
 	fi
 
@@ -1403,11 +1441,11 @@ _processEnter () {
 	# this returns to fzf trigger which should _loadList
 	if [[ ${_nextAction} == "select" ]]; then
 		# save current state to backStack (if anything changed)
-  	if [[ "${_nextViewScope}" != "${_viewScope}" || 
-  		"${_nextViewMode}" != "${_viewMode}" || 
-  		"${_nextViewContext}" != "${_viewContext}" ]]; then
-   		_pushBackStack
-  	fi
+		if [[ "${_nextViewScope}" != "${_viewScope}" || 
+			"${_nextViewMode}" != "${_viewMode}" || 
+			"${_nextViewContext}" != "${_viewContext}" ]]; then
+	 		_pushBackStack
+		fi
 		# update the state and return (nothing more to do)
 		_stateSet germFZF/viewScope "${_nextViewScope}"
 		_stateSet germFZF/viewMode "${_nextViewMode}"
@@ -1491,9 +1529,9 @@ _processEnter () {
 
 			delete-source)
 				# if empty, just do it
-  			if [[ $(_getSourceCount "${_nextObject}") == 0 ]]; then
-    			_info "'${_nextObject}' is empty"
-    			_stateSet germFZF/headerLines/5 "${_nextObject} is empty"
+				if [[ $(_getSourceCount "${_nextObject}") == 0 ]]; then
+					_info "'${_nextObject}' is empty"
+					_stateSet germFZF/headerLines/5 "${_nextObject} is empty"
 				# otherwise, use confirm-delete routine
 				else
 					_stateSet germFZF/viewScope confirm-delete
@@ -1532,49 +1570,49 @@ _processEnter () {
 				;;
 
 			rename-source)
-  			# Rename the source from _nextObject to query
-			  if [[ -z "${_nextObject}" ]]; then
- 			  	_stateSet germFZF/headerLines/6 "no source selected"
-   				return
-  			fi
-  
-  			if [[ -z "${_query}" ]]; then
-    			_stateSet germFZF/headerLines/6 "no name provided"
-    			return
-  			fi
-  
-  			# Don't allow renaming default
-  			if [[ "${_nextObject}" == "default" ]]; then
-    			_stateSet germFZF/headerLines/6 "cannot rename 'default'"
-    			return
-  			fi
-  
-  			# Attempt to rename the source
-  			if _renameSource "${_nextObject}" "${_query}"; then
-    			_stateSet germFZF/headerLines/4 "renamed '${_nextObject}' to '${_query}'"
-    			_stateSet germFZF/viewScope "source"
-    			_stateSet germFZF/viewMode "all"
-  			else
-    			case $? in
-     				1)
-        			# Git operation failed
-        			_stateSet germFZF/headerLines/6 "git operation failed!"
-        			;;
-      			2)
-        			# Invalid old source
-        			_stateSet germFZF/headerLines/6 "source not found!"
-        			;;
-      			3)
-        			# Invalid new name
-        			_stateSet germFZF/headerLines/6 "invalid name!"
-        			;;
-      			4)
-        			# New name already exists
-        			_stateSet germFZF/headerLines/6 "name exists!"
-        			;;
-    			esac
-  			fi
-  			;;
+				# Rename the source from _nextObject to query
+				if [[ -z "${_nextObject}" ]]; then
+ 					_stateSet germFZF/headerLines/6 "no source selected"
+	 				return
+				fi
+	
+				if [[ -z "${_query}" ]]; then
+					_stateSet germFZF/headerLines/6 "no name provided"
+					return
+				fi
+	
+				# Don't allow renaming default
+				if [[ "${_nextObject}" == "default" ]]; then
+					_stateSet germFZF/headerLines/6 "cannot rename 'default'"
+					return
+				fi
+	
+				# Attempt to rename the source
+				if _renameSource "${_nextObject}" "${_query}"; then
+					_stateSet germFZF/headerLines/4 "renamed '${_nextObject}' to '${_query}'"
+					_stateSet germFZF/viewScope "source"
+					_stateSet germFZF/viewMode "all"
+				else
+					case $? in
+		 				1)
+							# Git operation failed
+							_stateSet germFZF/headerLines/6 "git operation failed!"
+							;;
+						2)
+							# Invalid old source
+							_stateSet germFZF/headerLines/6 "source not found!"
+							;;
+						3)
+							# Invalid new name
+							_stateSet germFZF/headerLines/6 "invalid name!"
+							;;
+						4)
+							# New name already exists
+							_stateSet germFZF/headerLines/6 "name exists!"
+							;;
+					esac
+				fi
+				;;
 
 			read)
 				# read with pager
@@ -1642,85 +1680,85 @@ export -f _transformEnter
 ##################################################################
 
 _pushBackStack() {
-    # Push current state onto the backStack as a colon-separated tuple
-    # Usage: _pushBackStack
-    
-    # Read current state values
-    local _currentScope=$(_stateRead "germFZF/viewScope")
-    local _currentContext=$(_stateRead "germFZF/viewContext")
-    local _currentMode=$(_stateRead "germFZF/viewMode")
-    
-    # Get the current stack height
-    local _stackDir="${_HOME}/.state/germFZF/backStack"
-    mkdir -p "${_stackDir}"
-    local _stackHeight=$(find "${_stackDir}" -mindepth 1 -maxdepth 1 -type d | wc -l)
-    local _nextIndex=$((_stackHeight + 1))
-    
-    # Create a new directory for this stack item
-    local _itemDir="${_stackDir}/${_nextIndex}"
-    mkdir -p "${_itemDir}"
-    
-    # Store the full state as a single tuple file
-    local _stateTuple="${_currentScope}:${_currentContext}:${_currentMode}"
-    touch "${_itemDir}/${_stateTuple}"
+		# Push current state onto the backStack as a colon-separated tuple
+		# Usage: _pushBackStack
+		
+		# Read current state values
+		local _currentScope=$(_stateRead "germFZF/viewScope")
+		local _currentContext=$(_stateRead "germFZF/viewContext")
+		local _currentMode=$(_stateRead "germFZF/viewMode")
+		
+		# Get the current stack height
+		local _stackDir="${_HOME}/.state/germFZF/backStack"
+		mkdir -p "${_stackDir}"
+		local _stackHeight=$(find "${_stackDir}" -mindepth 1 -maxdepth 1 -type d | wc -l)
+		local _nextIndex=$((_stackHeight + 1))
+		
+		# Create a new directory for this stack item
+		local _itemDir="${_stackDir}/${_nextIndex}"
+		mkdir -p "${_itemDir}"
+		
+		# Store the full state as a single tuple file
+		local _stateTuple="${_currentScope}:${_currentContext}:${_currentMode}"
+		touch "${_itemDir}/${_stateTuple}"
 }
 export -f _pushBackStack
 
 _popBackStack() {
-    # Pop and restore a state from the backStack
-    # Returns 0 on success, 1 if stack is empty
-    
-    # Get the current stack height
-    local _stackDir="${_HOME}/.state/germFZF/backStack"
-    [[ ! -d "${_stackDir}" ]] && mkdir -p "${_stackDir}"
-    
-    local _stackHeight=$(find "${_stackDir}" -mindepth 1 -maxdepth 1 -type d | wc -l)
-    [[ ${_stackHeight} -eq 0 ]] && return 1
-    
-    # Get the top stack item directory
-    local _topItemDir="${_stackDir}/${_stackHeight}"
-    
-    # The state is stored as a single file with the tuple format: "context:object:mode"
-    local _stateFile=$(find "${_topItemDir}" -maxdepth 1 -type f -not -name ".*" | head -1)
-    local _stateTuple=$(basename "${_stateFile}")
-    
-    # Parse the tuple
-    IFS=':' read -r _prevScope _prevContext _prevMode <<< "${_stateTuple}"
-    
-    # Set defaults if parsing failed
-    _prevScope=${_prevScope:-source}
-    _prevContext=${_prevContext:-}
-    _prevMode=${_prevMode:-all}
-    
-    # Set the state to the previous state
-    _stateSet germFZF/viewScope "${_prevScope}"
-    _stateSet germFZF/viewContext "${_prevContext}"
-    _stateSet germFZF/viewMode "${_prevMode}"
-    
-    # Remove the stack item
-    rm -rf "${_topItemDir}"
-    
-    # Return success
-    return 0
+		# Pop and restore a state from the backStack
+		# Returns 0 on success, 1 if stack is empty
+		
+		# Get the current stack height
+		local _stackDir="${_HOME}/.state/germFZF/backStack"
+		[[ ! -d "${_stackDir}" ]] && mkdir -p "${_stackDir}"
+		
+		local _stackHeight=$(find "${_stackDir}" -mindepth 1 -maxdepth 1 -type d | wc -l)
+		[[ ${_stackHeight} -eq 0 ]] && return 1
+		
+		# Get the top stack item directory
+		local _topItemDir="${_stackDir}/${_stackHeight}"
+		
+		# The state is stored as a single file with the tuple format: "context:object:mode"
+		local _stateFile=$(find "${_topItemDir}" -maxdepth 1 -type f -not -name ".*" | head -1)
+		local _stateTuple=$(basename "${_stateFile}")
+		
+		# Parse the tuple
+		IFS=':' read -r _prevScope _prevContext _prevMode <<< "${_stateTuple}"
+		
+		# Set defaults if parsing failed
+		_prevScope=${_prevScope:-source}
+		_prevContext=${_prevContext:-}
+		_prevMode=${_prevMode:-all}
+		
+		# Set the state to the previous state
+		_stateSet germFZF/viewScope "${_prevScope}"
+		_stateSet germFZF/viewContext "${_prevContext}"
+		_stateSet germFZF/viewMode "${_prevMode}"
+		
+		# Remove the stack item
+		rm -rf "${_topItemDir}"
+		
+		# Return success
+		return 0
 }
 export -f _popBackStack
 
 _clearBackStack() {
-    # Clear the entire backStack
-    rm -rf "${_HOME}/.state/germFZF/backStack"
-    mkdir -p "${_HOME}/.state/germFZF/backStack"
+		# Clear the entire backStack
+		rm -rf "${_HOME}/.state/germFZF/backStack"
+		mkdir -p "${_HOME}/.state/germFZF/backStack"
 }
 export -f _clearBackStack
 
 _navigateBack() {
-    # Navigate back using the backStack
-    # Called by alt-left or after actions like edit
-    if ! _popBackStack; then
-        # If stack is empty, return to main view
-        _stateSet germFZF/viewScope "source"
-        _stateSet germFZF/viewMode "all"
-        _stateSet germFZF/viewContext ""
-    fi
+		# Navigate back using the backStack
+		# Called by alt-left or after actions like edit
+		if ! _popBackStack; then
+				# If stack is empty, return to main view
+				_stateSet germFZF/viewScope "source"
+				_stateSet germFZF/viewMode "all"
+				_stateSet germFZF/viewContext ""
+		fi
 }
 export -f _navigateBack
 
@@ -1763,84 +1801,84 @@ export -f _determineSelection
 _getType () {
 		exec 2>>/tmp/fzf.debug
 		#set -x
-    # Determines the type of a selected item based on its format and context
-    # $1 = selected item name
-    # $2 = current view context
-    # Returns the determined type ("source", "entity", "index")
+		# Determines the type of a selected item based on its format and context
+		# $1 = selected item name
+		# $2 = current view context
+		# Returns the determined type ("source", "entity", "index")
 		# returns empty if unknown
-    
-    local _selection="${1:-}"
-    local _viewContext="${2:-source}"
+		
+		local _selection="${1:-}"
+		local _viewContext="${2:-source}"
 		local _viewMode
 		_viewMode=$(_stateRead germFZF/viewMode)
 
 		_debug "${FUNCNAME[0]}: type of ${_selection} in ${_viewContext}"
-    
-    case "${_viewContext}" in
-        "source")
-            # In source view, items are only sources
+		
+		case "${_viewContext}" in
+				"source")
+						# In source view, items are only sources
 						# unless we are in search mode
 
-   					# Simple check - if it exists as a source, it's a source
-    				if _doesNameExist "source" "${_selection}"; then
-        			echo "source"
+	 					# Simple check - if it exists as a source, it's a source
+						if _doesNameExist "source" "${_selection}"; then
+							echo "source"
 						# otherwise we don't know
 						elif [[ ${_viewMode} == "search" ]]; then
 							echo "entity"
 						fi
-            ;;
-            
-        "entity")
-            # In entity view, the type depends on the viewMode
+						;;
+						
+				"entity")
+						# In entity view, the type depends on the viewMode
 						# because we will have index types soon
-            case "${_viewMode}" in
-                "raw")
-                    echo "entity"
-                    ;;
-                "firstline")
-                    echo "entity"
-                    ;;
-                "search")
-                    echo "entity"
-                    ;;
-                *)
-                    echo "unknown"
-                    ;;
-            esac
-            ;;
-            
-        "index")
-            # Index view only contains index items
-            echo "index"
-            ;;
-            
-        *)
-            # Default fallback
-            echo "unknown"
-            ;;
-    esac
+						case "${_viewMode}" in
+								"raw")
+										echo "entity"
+										;;
+								"firstline")
+										echo "entity"
+										;;
+								"search")
+										echo "entity"
+										;;
+								*)
+										echo "unknown"
+										;;
+						esac
+						;;
+						
+				"index")
+						# Index view only contains index items
+						echo "index"
+						;;
+						
+				*)
+						# Default fallback
+						echo "unknown"
+						;;
+		esac
 }
 export -f _getType 
 
 _toggleSearchOrder() {
-    # Check the current FZF_PROMPT and toggle between "> " and "^> "
-    if [[ "${FZF_PROMPT}" == "> " ]]; then
-        # If the prompt is "> ", switch to "^> "
-        echo "^> "
-    else
-        # Otherwise, switch to "> "
-        echo "> "
-    fi
+		# Check the current FZF_PROMPT and toggle between "> " and "^> "
+		if [[ "${FZF_PROMPT}" == "> " ]]; then
+				# If the prompt is "> ", switch to "^> "
+				echo "^> "
+		else
+				# Otherwise, switch to "> "
+				echo "> "
+		fi
 }
 export -f _toggleSearchOrder
 
 _isSearchReversed() {
-    # Check if the FZF_PROMPT indicates reversed search
-    if [[ "${FZF_PROMPT}" == "^> " ]]; then
-        return 0 # Reversed
-    else
-        return 1 # Not reversed
-    fi
+		# Check if the FZF_PROMPT indicates reversed search
+		if [[ "${FZF_PROMPT}" == "^> " ]]; then
+				return 0 # Reversed
+		else
+				return 1 # Not reversed
+		fi
 }
 export -f _isSearchReversed
 
@@ -1858,86 +1896,86 @@ _loadList() {
 	# arg 1 (optional) view scope (source,entity)
 	# arg 2 (optional) view mode (all,smart, etc)
 	# arg 3 (optional) view context (ie object)
-    local _param_viewScope=${1:-}
-    local _param_viewMode=${2:-}
-    local _param_viewContext=${3:-} # Parameter for viewContext
+		local _param_viewScope=${1:-}
+		local _param_viewMode=${2:-}
+		local _param_viewContext=${3:-} # Parameter for viewContext
 
-    local _viewScope
-    local _viewMode
-    local _viewContext
+		local _viewScope
+		local _viewMode
+		local _viewContext
 
-    # Determine the current view scope
-    if [[ -n "${_param_viewScope}" ]]; then
-        _viewScope="${_param_viewScope}"
-    else
-        _viewScope=$(_stateRead "germFZF/viewScope") || _viewScope="source"
-    fi
+		# Determine the current view scope
+		if [[ -n "${_param_viewScope}" ]]; then
+				_viewScope="${_param_viewScope}"
+		else
+				_viewScope=$(_stateRead "germFZF/viewScope") || _viewScope="source"
+		fi
 
-    # Determine the view mode
-    if [[ -n "${_param_viewMode}" ]]; then
-        _viewMode="${_param_viewMode}"
-    else
-        _viewMode=$(_stateRead "germFZF/viewMode")
-    fi
+		# Determine the view mode
+		if [[ -n "${_param_viewMode}" ]]; then
+				_viewMode="${_param_viewMode}"
+		else
+				_viewMode=$(_stateRead "germFZF/viewMode")
+		fi
 
-    # Determine the view context
-    if [[ -n "${_param_viewContext}" ]]; then
-        _viewContext="${_param_viewContext}"
-    else
-        _viewContext=$(_stateRead "germFZF/viewContext")
-    fi
+		# Determine the view context
+		if [[ -n "${_param_viewContext}" ]]; then
+				_viewContext="${_param_viewContext}"
+		else
+				_viewContext=$(_stateRead "germFZF/viewContext")
+		fi
 
-    _debug "${FUNCNAME[0]}: view scope    : ${_viewScope}"
-    _debug "${FUNCNAME[0]}: view mode     : ${_viewMode}"
-    _debug "${FUNCNAME[0]}: view context  : ${_viewContext}"
+		_debug "${FUNCNAME[0]}: view scope    : ${_viewScope}"
+		_debug "${FUNCNAME[0]}: view mode     : ${_viewMode}"
+		_debug "${FUNCNAME[0]}: view context  : ${_viewContext}"
 
-    local _generatedListOutput
+		local _generatedListOutput
 
-    # Capture the output of the list generation logic
-    _generatedListOutput=$(
-        case "${_viewScope}" in
-            "source")
-                if [[ ${_viewMode} == "search" ]]; then
-                    local _query=${FZF_QUERY:-'.'}
-                    # rg output will be sorted externally
-                    rg --color=always --line-number --no-heading --smart-case \
-                        --glob=!.*/ "${_query}" * || true
-                else # "all" mode
-                    ls "${_HOME}"
-                fi
-                ;;
-            "entity")
-                if [[ ${_viewMode} == "search" ]]; then
-                    local _query=${FZF_QUERY:-'.'}
-                    # rg output will be sorted externally
-                    rg --color=always --line-number --no-heading --smart-case \
-                        --glob=!.*/ "${_query}" "${_viewContext}" || true
-                elif [[ ${_viewMode} == "raw" ]]; then
-                    ls "${_viewContext}"
-                elif [[ ${_viewMode} == "firstline" ]]; then
-                    local _entityFile
-                    # The find | sort -z is for processing order of files before _getEntityFirstLine.
-                    # The final display sort (normal or reversed) is handled externally.
-                    find "${_viewContext}" -mindepth 1 -maxdepth 1 -type f -not -name ".*" -print0 | sort -z | while IFS= read -r -d $'\0' _entityPath; do
-                        _entityFile=$(basename "${_entityPath}")
-                        _getEntityFirstLine "$(basename "${_viewContext}")" "${_entityFile}"
-                    done
-                elif [[ ${_viewMode} == "indexed" ]]; then
-                    # This output will also be sorted externally
-                    echo -e "1 mock first line\tfilename\n2 mock 2nd line\tfile2"
-                fi
-                ;;
-        esac
-    )
+		# Capture the output of the list generation logic
+		_generatedListOutput=$(
+				case "${_viewScope}" in
+						"source")
+								if [[ ${_viewMode} == "search" ]]; then
+										local _query=${FZF_QUERY:-'.'}
+										# rg output will be sorted externally
+										rg --color=always --line-number --no-heading --smart-case \
+												--glob=!.*/ "${_query}" * || true
+								else # "all" mode
+										ls "${_HOME}"
+								fi
+								;;
+						"entity")
+								if [[ ${_viewMode} == "search" ]]; then
+										local _query=${FZF_QUERY:-'.'}
+										# rg output will be sorted externally
+										rg --color=always --line-number --no-heading --smart-case \
+												--glob=!.*/ "${_query}" "${_viewContext}" || true
+								elif [[ ${_viewMode} == "raw" ]]; then
+										ls "${_viewContext}"
+								elif [[ ${_viewMode} == "firstline" ]]; then
+										local _entityFile
+										# The find | sort -z is for processing order of files before _getEntityFirstLine.
+										# The final display sort (normal or reversed) is handled externally.
+										find "${_viewContext}" -mindepth 1 -maxdepth 1 -type f -not -name ".*" -print0 | sort -z | while IFS= read -r -d $'\0' _entityPath; do
+												_entityFile=$(basename "${_entityPath}")
+												_getEntityFirstLine "$(basename "${_viewContext}")" "${_entityFile}"
+										done
+								elif [[ ${_viewMode} == "index" ]]; then
+										# This output will also be sorted externally
+										echo -e "1 mock first line\tfilename\n2 mock 2nd line\tfile2"
+								fi
+								;;
+				esac
+		)
 
-    # Apply final sorting based on _isSearchReversed
-    if [[ -n "${_generatedListOutput}" ]]; then
-        if _isSearchReversed; then
-            echo "${_generatedListOutput}" | sort -r
-        else
-            echo "${_generatedListOutput}" | sort # Apply a default sort if not reversed
-        fi
-    fi
+		# Apply final sorting based on _isSearchReversed
+		if [[ -n "${_generatedListOutput}" ]]; then
+				if _isSearchReversed; then
+						echo "${_generatedListOutput}" | sort -r
+				else
+						echo "${_generatedListOutput}" | sort # Apply a default sort if not reversed
+				fi
+		fi
 }
 export -f _loadList
 
@@ -1974,35 +2012,35 @@ _getEntityList() {
 export -f _getEntityList
 
 _getEntityFirstLine() {
-    # $1: source name
-    # $2: entity timestamp filename
-    # Outputs: "Display Name (first line or truncated)\tActualFilename"
-    # or just "ActualFilename" if file issues or empty first line.
-    local _sourceName="${1}"
-    local _entityFilename="${2}"
-    local _filePath="${_HOME}/${_sourceName}/${_entityFilename}"
-    local _firstLineDisplay
-    local _maxDisplayLength=70 # Max length for the first line display
+		# $1: source name
+		# $2: entity timestamp filename
+		# Outputs: "Display Name (first line or truncated)\tActualFilename"
+		# or just "ActualFilename" if file issues or empty first line.
+		local _sourceName="${1}"
+		local _entityFilename="${2}"
+		local _filePath="${_HOME}/${_sourceName}/${_entityFilename}"
+		local _firstLineDisplay
+		local _maxDisplayLength=70 # Max length for the first line display
 
-    if [[ -f "${_filePath}" ]]; then
-        # Read the first non-empty line
-        _firstLineDisplay=$(grep -m 1 '[^[:space:]]' "${_filePath}" || true)
-        # Trim leading/trailing whitespace
-        _firstLineDisplay="${_firstLineDisplay#"${_firstLineDisplay%%[![:space:]]*}"}"
-        _firstLineDisplay="${_firstLineDisplay%"${_firstLineDisplay##*[![:space:]]}"}"
-        
-        if [[ -z "${_firstLineDisplay}" ]]; then
-            # If first line is empty, use filename as display
-            _firstLineDisplay="${_entityFilename}"
-        elif [[ ${#_firstLineDisplay} -gt ${_maxDisplayLength} ]]; then
-            # Truncate if too long
-            _firstLineDisplay="${_firstLineDisplay:0:$((_maxDisplayLength-3))}..."
-        fi
-        echo -e "${_firstLineDisplay}\t${_entityFilename}"
-    else
-        # Fallback if file not found or other issues
-        echo -e "${_entityFilename}\t${_entityFilename}"
-    fi
+		if [[ -f "${_filePath}" ]]; then
+				# Read the first non-empty line
+				_firstLineDisplay=$(grep -m 1 '[^[:space:]]' "${_filePath}" || true)
+				# Trim leading/trailing whitespace
+				_firstLineDisplay="${_firstLineDisplay#"${_firstLineDisplay%%[![:space:]]*}"}"
+				_firstLineDisplay="${_firstLineDisplay%"${_firstLineDisplay##*[![:space:]]}"}"
+				
+				if [[ -z "${_firstLineDisplay}" ]]; then
+						# If first line is empty, use filename as display
+						_firstLineDisplay="${_entityFilename}"
+				elif [[ ${#_firstLineDisplay} -gt ${_maxDisplayLength} ]]; then
+						# Truncate if too long
+						_firstLineDisplay="${_firstLineDisplay:0:$((_maxDisplayLength-3))}..."
+				fi
+				echo -e "${_firstLineDisplay}\t${_entityFilename}"
+		else
+				# Fallback if file not found or other issues
+				echo -e "${_entityFilename}\t${_entityFilename}"
+		fi
 }
 export -f _getEntityFirstLine
 
@@ -2014,8 +2052,8 @@ export -f _getEntityFirstLine
 ##################################################################
 
 _setHeader() {
-    #exec 2>>/tmp/fzf.debug
-    #set -x
+		#exec 2>>/tmp/fzf.debug
+		#set -x
 		#
 		# to make them visible to tree in .state we will get a little tricky
 		# for example, we can't use "/" in file names
@@ -2029,96 +2067,96 @@ _setHeader() {
 		# for that we use unicode since this is only display
 		# touch "use $(printf \\u2215) to exit"
 
-    # Path to the state file for header lines
-    local _headerStateDir="${_HOME}/.state/germFZF/headerLines"
+		# Path to the state file for header lines
+		local _headerStateDir="${_HOME}/.state/germFZF/headerLines"
 
-    # Ensure the state directory exists
-    mkdir -p "$(dirname "${_headerStateDir}")"
+		# Ensure the state directory exists
+		mkdir -p "$(dirname "${_headerStateDir}")"
 
-    # Declare an associative array to store the header lines
-    declare -A lines
+		# Declare an associative array to store the header lines
+		declare -A lines
 
 		# create the keys
 		for i in {1..6}; do
 			lines["i"]=""
 		done
 
-    # Read the current headers from the state dir
+		# Read the current headers from the state dir
 		_debug "checking state"
-    if [[ -d "${_headerStateDir}" ]]; then
+		if [[ -d "${_headerStateDir}" ]]; then
 				for keydir in "${_headerStateDir}"/*; do
 						key=$(basename $keydir)
 						if [[ -d $keydir ]]; then
 							value=$(basename "${keydir}/"*)
-            	lines["$key"]="$value"
+							lines["$key"]="$value"
 							_debug "added key '$key' with value '$value'"
 						else
 							_debug "no keys found in state"
 						fi
-        done
-    fi
+				done
+		fi
 
-    # Process the function input arguments (if any)
+		# Process the function input arguments (if any)
 		_debug "processing arguments"
-    local input="${1:-}"
-    if [[ -n "$input" ]]; then
-        IFS=',' read -r -a fields <<< "$input"
-        for field in "${fields[@]}"; do
-            if [[ "$field" =~ ^([0-9]+):(.*)$ ]]; then
-                local line_number="${BASH_REMATCH[1]}" # Line number (1-based)
-                local line_content="${BASH_REMATCH[2]}" # Line content
+		local input="${1:-}"
+		if [[ -n "$input" ]]; then
+				IFS=',' read -r -a fields <<< "$input"
+				for field in "${fields[@]}"; do
+						if [[ "$field" =~ ^([0-9]+):(.*)$ ]]; then
+								local line_number="${BASH_REMATCH[1]}" # Line number (1-based)
+								local line_content="${BASH_REMATCH[2]}" # Line content
 								if [[ -z "${line_content}" ]]; then
 									# directive is to clear the line
 									lines["$line_number"]=""
 									_debug "clear line directive"
 								else
-                	# update the line
-                	lines["$line_number"]="$line_content"
+									# update the line
+									lines["$line_number"]="$line_content"
 									_debug "update line $line_number in bash state"
 								fi
-            fi
-        done
-    fi
+						fi
+				done
+		fi
 
-    # Write the updated header back to the state file
+		# Write the updated header back to the state file
 		_debug "updating state"
-    for key in $(seq 1 6); do
- 	  	local key_dir="${_headerStateDir}/${key}"
-      if [[ -n "${lines[$key]:-}" ]]; then
-        _debug "found line $key with content '${lines[$key]}'"
+		for key in $(seq 1 6); do
+ 			local key_dir="${_headerStateDir}/${key}"
+			if [[ -n "${lines[$key]:-}" ]]; then
+				_debug "found line $key with content '${lines[$key]}'"
 				# clean state before repopulating
 				rm -rf "${key_dir}"/*
 				# Replace Unicode symbols with their evaluated printf equivalents
-        local sanitized_line="${lines[$key]}"
-        sanitized_line=$(echo "$sanitized_line" | sed -e "s/？/$(printf '\uff1f')/g" -e "s/∕/$(printf '\u2215')/g")
+				local sanitized_line="${lines[$key]}"
+				sanitized_line=$(echo "$sanitized_line" | sed -e "s/？/$(printf '\uff1f')/g" -e "s/∕/$(printf '\u2215')/g")
 				# create new state
-        mkdir -p "${_headerStateDir}/${key}"
-        touch "${_headerStateDir}/${key}/${sanitized_line}"
+				mkdir -p "${_headerStateDir}/${key}"
+				touch "${_headerStateDir}/${key}/${sanitized_line}"
 			else
 				# line was removed
 				_debug "removing line $key"
 				rm -rf "${_headerStateDir}/${key}"
 			fi
-    done
+		done
 
-    # Apply formatting and print the updated header for fzf
-    for key in $(seq 1 6); do
-	    if [[ -n "${lines[$key]:-}" ]]; then
-  	    case "$key" in
-       		1) printf "%s\n" "${lines[$key]}" ;;
-          2) printf "\033[38;5;11m%s\033[0m\n" "${lines[$key]}" ;;
-          3) printf "\033[3;38;5;13m%s\033[0m\n" "${lines[$key]}" ;;
-          4) printf "\033[3;38;5;10m%s\033[0m\n" "${lines[$key]}" ;;
-          5) [[ "${_DEBUG}" == "true" ]] && printf "\033[38;2;42;161;179m%s\033[0m\n" "${lines[$key]}" ;;
-          6) printf "\033[3;38;5;9m%s\033[0m\n" "${lines[$key]}" ;;
-        esac
-      fi
-    done
+		# Apply formatting and print the updated header for fzf
+		for key in $(seq 1 6); do
+			if [[ -n "${lines[$key]:-}" ]]; then
+				case "$key" in
+			 		1) printf "%s\n" "${lines[$key]}" ;;
+					2) printf "\033[38;5;11m%s\033[0m\n" "${lines[$key]}" ;;
+					3) printf "\033[3;38;5;13m%s\033[0m\n" "${lines[$key]}" ;;
+					4) printf "\033[3;38;5;10m%s\033[0m\n" "${lines[$key]}" ;;
+					5) [[ "${_DEBUG}" == "true" ]] && printf "\033[38;2;42;161;179m%s\033[0m\n" "${lines[$key]}" ;;
+					6) printf "\033[3;38;5;9m%s\033[0m\n" "${lines[$key]}" ;;
+				esac
+			fi
+		done
 
-    # Append the viewContext as the last line in the header
+		# Append the viewContext as the last line in the header
 		_viewContext=$(_stateRead germFZF/viewContext)
 		if [[ -n ${_viewContext} ]]; then
-	    printf "\033[38;5;14m%s\033[0m\n" "${_viewContext}"
+			printf "\033[38;5;14m%s\033[0m\n" "${_viewContext}"
 		fi
 
 }
@@ -2237,19 +2275,19 @@ _preview () {
 	# to use query as a search term in the preview window
 	# requires disable-search activated by alt-Q
 	# if view context is entity, query triggers search within source
-  elif [[ ${_viewScope} == "entity" && ${_viewMode} != "search" ]]; then
-    local _actualFileToPreview="${_selection}"
-    if [[ ${_viewMode} == "firstline" ]]; then
-       # _selection is "Display Name\tActualFilename"
-       _actualFileToPreview=$(echo -e "${_selection}" | cut -f2 -d$'\t')
-       [[ -z "${_actualFileToPreview}" || "${_actualFileToPreview}" == "${_selection}" ]] && _actualFileToPreview="${_selection}"
-    fi
+	elif [[ ${_viewScope} == "entity" && ${_viewMode} != "search" ]]; then
+		local _actualFileToPreview="${_selection}"
+		if [[ ${_viewMode} == "firstline" ]]; then
+			 # _selection is "Display Name\tActualFilename"
+			 _actualFileToPreview=$(echo -e "${_selection}" | cut -f2 -d$'\t')
+			 [[ -z "${_actualFileToPreview}" || "${_actualFileToPreview}" == "${_selection}" ]] && _actualFileToPreview="${_selection}"
+		fi
 
-    if [[ -z $2 ]]; then # $2 is _query
-      _previewEntity "${_actualFileToPreview}" "" "${_viewContext}"
-    else
-      _previewEntity "${_actualFileToPreview}" "${_query}" "${_viewContext}" | sed "s/${_query}/$(printf '\033[1;31m&\033[0m')/g"
-    fi
+		if [[ -z $2 ]]; then # $2 is _query
+			_previewEntity "${_actualFileToPreview}" "" "${_viewContext}"
+		else
+			_previewEntity "${_actualFileToPreview}" "${_query}" "${_viewContext}" | sed "s/${_query}/$(printf '\033[1;31m&\033[0m')/g"
+		fi
 
 	# in search mode
 	elif [[ ${_viewScope} == "entity" && ${_viewMode} == "search" ]]; then
@@ -2275,25 +2313,25 @@ _previewSearch () {
 	local _selection=${1:-}
 	local _query=${2:-}
 
-  # Parse the ripgrep output format: source/file:line:content
-  # First split into source and the rest
-  local _source _rest
-  IFS='/' read -r _source _rest <<< "${_selection}"
-  
-  # Now split the rest into file, line, and content
-  local _file _line _content
-  # Extract just the first two colon-separated fields
-  _file=$(echo "$_rest" | cut -d: -f1)
-  _line=$(echo "$_rest" | cut -d: -f2)
-  
-  # Verify we have required information
+	# Parse the ripgrep output format: source/file:line:content
+	# First split into source and the rest
+	local _source _rest
+	IFS='/' read -r _source _rest <<< "${_selection}"
+	
+	# Now split the rest into file, line, and content
+	local _file _line _content
+	# Extract just the first two colon-separated fields
+	_file=$(echo "$_rest" | cut -d: -f1)
+	_line=$(echo "$_rest" | cut -d: -f2)
+	
+	# Verify we have required information
 	if [[ -z ${_selection} ]]; then
 		echo "no match"
 		return
-  elif [[ -z "${_file}" || -z "${_line}" ]]; then
-    echo "Invalid search result format: ${_selection}"
-    return
-  fi
+	elif [[ -z "${_file}" || -z "${_line}" ]]; then
+		echo "Invalid search result format: ${_selection}"
+		return
+	fi
 
 	# print our preview winow header (5 lines)
 	echo -e "     \e[38;5;238m source : $_source \e[0m"
@@ -2305,24 +2343,24 @@ _previewSearch () {
 
 	# Calculate the previous and next line numbers
 	local _prevLine=$(( _line - 1 ))
-  local _nextLine=$(( _line + 1 ))
+	local _nextLine=$(( _line + 1 ))
 
 # use awk to highlight lines and the query word
 awk -v query="${_query}" -v red="\033[48;2;192;30;40m" -v reset="\033[0m" -v yellow="\033[48;2;80;60;0m" '
 BEGIN { IGNORECASE = 1 } # Enable case-insensitive matching for the query variable
 NR == '${_prevLine}' || NR == '${_line}' || NR == '${_nextLine}' {
-    current_line_content = $0 # Work with the original line content
+		current_line_content = $0 # Work with the original line content
 
-    # Perform case-insensitive replacement on current_line_content.
-    # Due to IGNORECASE = 1, "query" will match case-insensitively.
-    # "&" in the replacement string will contain the actual matched text, preserving its original case.
-    # The "red "&" reset yellow" sequence ensures the matched text gets the "red" background,
-    # and the "yellow" background continues after the match within the same line.
-    gsub(query, red "&" reset yellow, current_line_content)
+		# Perform case-insensitive replacement on current_line_content.
+		# Due to IGNORECASE = 1, "query" will match case-insensitively.
+		# "&" in the replacement string will contain the actual matched text, preserving its original case.
+		# The "red "&" reset yellow" sequence ensures the matched text gets the "red" background,
+		# and the "yellow" background continues after the match within the same line.
+		gsub(query, red "&" reset yellow, current_line_content)
 
-    # Print the modified line, wrapped in the overall "yellow" background.
-    print yellow current_line_content reset
-    next
+		# Print the modified line, wrapped in the overall "yellow" background.
+		print yellow current_line_content reset
+		next
 }
 { print } # Print other lines as is
 ' "${_source}/${_file}" | batcat --color=always --style=numbers
@@ -2330,12 +2368,12 @@ return
 
 	# this is the easiest way to figure out what ansi codes are coming through
 	_showANSI() {
-   # Replace ESC character with visible "<ESC>"
-   sed 's/\x1b/\[ESC\]/g'
+	 # Replace ESC character with visible "<ESC>"
+	 sed 's/\x1b/\[ESC\]/g'
 	}
 	export -f _showANSI
 
-  batcat --color=always --style=numbers \
+	batcat --color=always --style=numbers \
 		--highlight-line "${_prevLine}:${_nextLine}" \
 		"${_file}" 2>/dev/null | head -10 | _showANSI
 
@@ -2345,14 +2383,14 @@ return
 #  batcat --color=always --style=numbers \
 #		--highlight-line "${_prevLine}:${_nextLine}" \
 #		"${_file}" 2>/dev/null | sed "s/${2}/$(printf '\033[1;31m&\033[0m')/g"
-  # Use batcat with default highlighting then pipe through sed twice:
-  # 1. Replace the gray background with golden yellow (RGB 238,183,27)
-  # 2. Highlight search query in bold red
-  batcat --color=always --style=numbers \
-    --highlight-line "${_prevLine}:${_nextLine}" \
-    "${_file}" 2>/dev/null | 
-    sed 's/\x1b\[48;2;51;51;51/\x1b[48;2;110;90;63/g' |
-    sed "s/${_query}/$(printf '\033[1;31m&\033[0m')/gi"
+	# Use batcat with default highlighting then pipe through sed twice:
+	# 1. Replace the gray background with golden yellow (RGB 238,183,27)
+	# 2. Highlight search query in bold red
+	batcat --color=always --style=numbers \
+		--highlight-line "${_prevLine}:${_nextLine}" \
+		"${_file}" 2>/dev/null | 
+		sed 's/\x1b\[48;2;51;51;51/\x1b[48;2;110;90;63/g' |
+		sed "s/${_query}/$(printf '\033[1;31m&\033[0m')/gi"
 }
 export -f _previewSearch
 
@@ -2380,7 +2418,7 @@ _previewNameValidation () {
 	# arg2 = selection
 	# arg3 = selectedType
 	local _nameType=${3}
-	local _maxLength=25
+	local _maxLength=50
 	local _minLength=1
 	local lengthStatus
 	local avail
@@ -2432,9 +2470,9 @@ _activeNameFeedback () {
 		rule8="  first alphanumeric only"
 		rule9="  last alphanumeric only"
 
-		echo "---CREATING NEW SOURCE?----------NAMING RULES-----------"
-		printf "name: \e[33m%-25s\e[0m\n" "$1"
-		printf "valid? %-30s \e[2m%-27s\e[0m\n" $(_cStat ${acceptable}) "$rule1"
+		echo "---CREATING NEW SOURCE?----------NAMING RULES----------+"
+		printf "name: \e[33m%-50s\e[0m\n" "$1"
+		printf "valid? %30s \e[2m%-27s\e[0m\n" $(_cStat ${acceptable}) "$rule1"
 		printf "length [%.2d] %25s \e[2m%-27s\e[0m\n" ${#1} "$(_cStat "${lengthStatus}")" "$rule2"
 		printf "unique: %29s \e[2m%-27s\e[0m\n" "$(_cStat "${avail}")" "$rule3"
 		printf "characters allowed: %17s \e[2m%-27s\e[0m\n" $(_cStat "${allowedChars}") "$rule4"
@@ -2444,18 +2482,6 @@ _activeNameFeedback () {
 		printf "first ['\e[33m%s\e[0m'] allowed: %16s \e[2m%-27s\e[0m\n" "${1:0:1}" "$(_cStat "${lead}")" "$rule8"
 		printf "last ['\e[33m%s\e[0m'] allowed: %17s \e[2m%-27s\e[0m\n" "${1:(-1)}" "$(_cStat "${last}")" "$rule9"
 		echo "============================"
-		if [[ ${acceptable} == "YES" && -n ${2} ]]; then
-			printf "\e[31mENTER\e[0m to select: \e[33m%-25s\e[0m\n" "$2"
-			printf "\e[31mALT-ENTER\e[0m to create: \e[33m%-25s\e[0m\n" "$1"
-			echo "ctrl-n to add new entity to $2"
-			echo "alt-D to delete source $2"
-		elif [[ ${acceptable} == "YES" && -z ${2} ]]; then
-			printf "\e[31mENTER\e[0m to create: \e[33m%-25s\e[0m\n" "$1"
-		elif [[ ${acceptable} == "NO" && -n ${2} ]]; then
-			printf "\e[31mENTER\e[0m to select: \e[33m%-25s\e[0m\n" "$2"
-			echo "ctrl-n to add new entity to $2"
-			echo "alt-D to delete source $2"
-		fi
 		echo
 	}
 	export -f _activeNameFeedback
@@ -2474,13 +2500,13 @@ export -f _previewNameValidation
 _previewHelp() {
 	# preview help windows
 	# arg1 = context (source is default)
-  
-  # determine the current view context
-  local _viewContext
-  if [[ -n "${1:-}" ]]; then
-  	_viewContext="$1"
-  else
-  	_viewContext=$(_stateRead "germFZF/viewContext") || _viewContext="source"
+	
+	# determine the current view context
+	local _viewContext
+	if [[ -n "${1:-}" ]]; then
+		_viewContext="$1"
+	else
+		_viewContext=$(_stateRead "germFZF/viewContext") || _viewContext="source"
 	fi
 
 	_debug ${FUNCNAME[0]}: "context is ${_viewContext}"
@@ -2614,21 +2640,21 @@ export -f _createSource
 _isNameValid() {
 	exec 2>>/tmp/fzf.debug
 	#set -x
-    # Existing validation 
-    local _name=${1:-}
-    local _maxLength=25
-    local _minLength=1
-    
-    # Basic validation checks
-    if [[ ! "${_name}" =~ ^([[:lower:]|[:digit:]]|[-_.]){${_minLength},${_maxLength}}$ ]]; then
-        return 1
-    fi
-    
-    # Check start/end constraints and repeats
-    [[ "${_name}" =~ ^[[:lower:]|[:digit:]] ]] || return 1
-    [[ "${_name}" =~ [[:lower:]|[:digit:]]$ ]] || return 1
-    [[ "${_name}" =~ ([.]|[-]|[_]){2} ]] && return 1
-    
+		# Existing validation 
+		local _name=${1:-}
+		local _maxLength=50
+		local _minLength=1
+		
+		# Basic validation checks
+		if [[ ! "${_name}" =~ ^([[:lower:]|[:digit:]]|[-_.]){${_minLength},${_maxLength}}$ ]]; then
+				return 1
+		fi
+		
+		# Check start/end constraints and repeats
+		[[ "${_name}" =~ ^[[:lower:]|[:digit:]] ]] || return 1
+		[[ "${_name}" =~ [[:lower:]|[:digit:]]$ ]] || return 1
+		[[ "${_name}" =~ ([.]|[-]|[_]){2} ]] && return 1
+		
 		return 0
 }
 export -f _isNameValid
@@ -2636,60 +2662,60 @@ export -f _isNameValid
 _renameSource() {
 	exec 2>>/tmp/fzf.debug
 
-  # Rename a source directory
-  # $1 = old source name (current source)
-  # $2 = new source name
-  # Return 0 for success
-  # Return 1 for git failure
-  # Return 2 for invalid old source 
-  # Return 3 for invalid new name
-  # Return 4 for new name already exists
+	# Rename a source directory
+	# $1 = old source name (current source)
+	# $2 = new source name
+	# Return 0 for success
+	# Return 1 for git failure
+	# Return 2 for invalid old source 
+	# Return 3 for invalid new name
+	# Return 4 for new name already exists
 
-  local _oldSource="${1}"
-  local _newSource="${2}"
-  
-  # Check if old source exists
-  if [[ ! -d "${_HOME}/${_oldSource}" ]]; then
-    _error "Source '${_oldSource}' does not exist"
-    return 2
-  fi
-  
-  # Check if old source is "default" (cannot rename default)
-  if [[ "${_oldSource}" == "default" ]]; then
-    _error "Cannot rename the 'default' source"
-    return 2
-  fi
-  
-  # Check if new name is valid
-  if ! _isNameValid "${_newSource}"; then
-    _error "New name '${_newSource}' is not valid"
-    return 3
+	local _oldSource="${1}"
+	local _newSource="${2}"
+	
+	# Check if old source exists
+	if [[ ! -d "${_HOME}/${_oldSource}" ]]; then
+		_error "Source '${_oldSource}' does not exist"
+		return 2
 	fi
-  
-  # Check if new name already exists
-  if [[ -d "${_HOME}/${_newSource}" ]]; then
-    _error "Name '${_newSource}' already exists"
-    return 4
-  fi
-  
-  # Perform the rename using git mv
-  if ! git -C "${_HOME}" mv "${_oldSource}" "${_newSource}"; then
-    _error "Git rename operation failed"
-    return 1
-  fi
-  
-  # Commit the change
-  if ! git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] renamed '${_oldSource}' to '${_newSource}'"; then
-    _error "Git commit failed"
-    return 1
+	
+	# Check if old source is "default" (cannot rename default)
+	if [[ "${_oldSource}" == "default" ]]; then
+		_error "Cannot rename the 'default' source"
+		return 2
 	fi
-  
-  # Update the current source state if we renamed the current source
-  if [[ "$(_getSource)" == "${_oldSource}" ]]; then
-    _setSource "${_newSource}"
-  fi
-  
-  return 0
+	
+	# Check if new name is valid
+	if ! _isNameValid "${_newSource}"; then
+		_error "New name '${_newSource}' is not valid"
+		return 3
+	fi
+	
+	# Check if new name already exists
+	if [[ -d "${_HOME}/${_newSource}" ]]; then
+		_error "Name '${_newSource}' already exists"
+		return 4
+	fi
+	
+	# Perform the rename using git mv
+	if ! git -C "${_HOME}" mv "${_oldSource}" "${_newSource}"; then
+		_error "Git rename operation failed"
+		return 1
+	fi
+	
+	# Commit the change
+	if ! git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] renamed '${_oldSource}' to '${_newSource}'"; then
+		_error "Git commit failed"
+		return 1
+	fi
+	
+	# Update the current source state if we renamed the current source
+	if [[ "$(_getSource)" == "${_oldSource}" ]]; then
+		_setSource "${_newSource}"
+	fi
+	
+	return 0
 }
 export -f _renameSource
 
@@ -2699,22 +2725,22 @@ _deleteSource() {
 	# return 2 for empty request
 	# return 3 for attempt to delete "default"
 
-  local _source=${1:-}
+	local _source=${1:-}
 
 	if [[ -z ${_source:-} ]]; then
 		_warn "${FUNCNAME[0]}: arg required"
 		return 2
 	fi
 
-  # ensure the default source cannot be deleted
-  if [[ "${_source}" == "default" ]]; then
-    _warn "cannot delete 'default'"
-    return 3
-  fi
+	# ensure the default source cannot be deleted
+	if [[ "${_source}" == "default" ]]; then
+		_warn "cannot delete 'default'"
+		return 3
+	fi
 
-  # delete the source
-  git -C "${_HOME}" rm -rq "${_HOME}/${_source}"
-  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] deleted ${_state} ${_source}"
+	# delete the source
+	git -C "${_HOME}" rm -rq "${_HOME}/${_source}"
+	git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] deleted ${_state} ${_source}"
 	if [[ $? != 0 ]]; then
 		return 1
 	fi
@@ -2723,7 +2749,7 @@ export -f _deleteSource
 
 
 _XdeleteSource() {
-  local _source=${1:-}
+	local _source=${1:-}
 	local _state
 
 	if [[ -z ${_source:-} ]]; then
@@ -2731,30 +2757,30 @@ _XdeleteSource() {
 		return 1
 	fi
 
-  # ensure the default source cannot be deleted
-  if [[ "${_source}" == "default" ]]; then
-    _warn "cannot delete 'default'"
-    return 1
-  fi
+	# ensure the default source cannot be deleted
+	if [[ "${_source}" == "default" ]]; then
+		_warn "cannot delete 'default'"
+		return 1
+	fi
 
-  # check if the source is empty
-  if [[ $(_getSourceCount "${_source}") != 0 ]]; then
-    _warn "'${_source}' is not emptyinotify"
+	# check if the source is empty
+	if [[ $(_getSourceCount "${_source}") != 0 ]]; then
+		_warn "'${_source}' is not emptyinotify"
 		_state="NON-EMPTY"
-  fi
+	fi
 
-  # prompt for confirmation
-  local _yn
-  read -r -n1 -p "$(_ask "delete ${_state} '${_source}'? [y/n] ")" _yn
-  echo
-  if [[ "${_yn}" != "y" ]]; then
-    _warn "delete aborted"
-    return 1
-  fi
+	# prompt for confirmation
+	local _yn
+	read -r -n1 -p "$(_ask "delete ${_state} '${_source}'? [y/n] ")" _yn
+	echo
+	if [[ "${_yn}" != "y" ]]; then
+		_warn "delete aborted"
+		return 1
+	fi
 
-  # delete the source
-  git -C "${_HOME}" rm -rq "${_HOME}/${_source}"
-  git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] deleted ${_state} ${_source}"
+	# delete the source
+	git -C "${_HOME}" rm -rq "${_HOME}/${_source}"
+	git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] deleted ${_state} ${_source}"
 }
 export -f _deleteSource
 
@@ -2765,18 +2791,18 @@ export -f _deleteSource
 ##################################################################
 
 _toggleSearchMode() {
-  # toggle search mode on/off
-  
-  local _current_mode
-  _current_mode=$(_stateRead "germFZF/viewMode") || _current_mode="all"
-  
-  if [[ "${_current_mode}" == "search" ]]; then
-    # Turn search mode OFF
-    _stateSet "germFZF/viewMode" "all"
-  else
-    # Turn search mode ON
-    _stateSet "germFZF/viewMode" "search"
-  fi
+	# toggle search mode on/off
+	
+	local _current_mode
+	_current_mode=$(_stateRead "germFZF/viewMode") || _current_mode="all"
+	
+	if [[ "${_current_mode}" == "search" ]]; then
+		# Turn search mode OFF
+		_stateSet "germFZF/viewMode" "all"
+	else
+		# Turn search mode ON
+		_stateSet "germFZF/viewMode" "search"
+	fi
 }
 export -f _toggleSearchMode
 
@@ -2897,8 +2923,8 @@ _TRANSdeleteSource () {
 
 	# it is empty, not 'default', and is an existing source, so delete it
 	else
-  	git -C "${_HOME}" rm -rq "${_HOME}/${_selection}"
-  	git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] deleted ${_selection}"
+		git -C "${_HOME}" rm -rq "${_HOME}/${_selection}"
+		git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] deleted ${_selection}"
 		_stateSet germFZF/headerLines/6 "deleted: ${_selection}'"
 	fi
 
@@ -3169,12 +3195,12 @@ _stateRead() {
 		return 1
 	fi
 
-  # find first file inside the key directory
+	# find first file inside the key directory
 	for file in "${_stateDir}/${key}"/*; do
  		if [[ -f "$file" ]]; then
-   		basename "$file"
+	 		basename "$file"
  			return 0
-   	fi
+	 	fi
  	done
 
  	# no value found
@@ -3183,37 +3209,37 @@ _stateRead() {
 export -f _stateRead
 
 _checkLock() {
-  # Attempt to create the lock directory atomically
-  if mkdir -p "${_stateDir}/germInstance/lock" 2>/dev/null; then
-    # Successfully acquired the lock
-    _stateSet "germInstance/shellPID" "$$"
-    _debug "lock acquired (PID: $$)."
-  else
-    # Lock directory already exists, check for stale lock
-    local _existingPID
-    _existingPID=$(_stateRead "germInstance/shellPID")
-    
-    if [[ -n "${_existingPID}" && -d "/proc/${_existingPID}" ]]; then
-      # Another instance is running
-      _error "another instance of germ is already running (PID: ${_existingPID}). Exiting."
-      exit 1
-    else
-      # Stale lock detected, remove and retry
-      _warn "stale lock detected (PID: ${_existingPID}). Overwriting."
-      rm -rf "${_stateDir}/germInstance/lock"
-      mkdir "${_stateDir}/germInstance/lock"
-      _stateSet "germInstance/shellPID" "$$"
-      _info "lock acquired (PID: $$)."
-    fi
-  fi
+	# Attempt to create the lock directory atomically
+	if mkdir -p "${_stateDir}/germInstance/lock" 2>/dev/null; then
+		# Successfully acquired the lock
+		_stateSet "germInstance/shellPID" "$$"
+		_debug "lock acquired (PID: $$)."
+	else
+		# Lock directory already exists, check for stale lock
+		local _existingPID
+		_existingPID=$(_stateRead "germInstance/shellPID")
+		
+		if [[ -n "${_existingPID}" && -d "/proc/${_existingPID}" ]]; then
+			# Another instance is running
+			_error "another instance of germ is already running (PID: ${_existingPID}). Exiting."
+			exit 1
+		else
+			# Stale lock detected, remove and retry
+			_warn "stale lock detected (PID: ${_existingPID}). Overwriting."
+			rm -rf "${_stateDir}/germInstance/lock"
+			mkdir "${_stateDir}/germInstance/lock"
+			_stateSet "germInstance/shellPID" "$$"
+			_info "lock acquired (PID: $$)."
+		fi
+	fi
 }
 
 _releaseLock() {
-  # Remove the lock directory
-  if [[ -d "${_stateDir}/germInstance/lock" ]]; then
-    rm -rf "${_stateDir}/germInstance/lock"
-    _debug "Lock released (PID: $$)."
-  fi
+	# Remove the lock directory
+	if [[ -d "${_stateDir}/germInstance/lock" ]]; then
+		rm -rf "${_stateDir}/germInstance/lock"
+		_debug "Lock released (PID: $$)."
+	fi
 }
 
 ##################################################################
@@ -3257,13 +3283,13 @@ _shell() {
 	# the splash welcome
 	_displayWelcome() {
 	cat <<HEREDOC
-  __  ___  ___   __  __ 
+	__  ___  ___   __  __ 
  / _)(  _)(  ,) (  \/  )
 ( (/\ ) _) )  \  )    ( 
  \__/(___)(_)\_)(_/\/\_)
 
-      type ${green}h${reset} for help
-      type ${red}q${reset} to quit
+			type ${green}h${reset} for help
+			type ${red}q${reset} to quit
 
 HEREDOC
 	}
@@ -3398,8 +3424,8 @@ HEREDOC
 				E)
 					# edit source description
 					${_EDITOR} "${_HOME}/${_currentSource}/.description"
-  				git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/${_currentSource}/.description"
-  				git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] updated '${_currentSource}' description"
+					git -C "${_HOME}" --git-dir="${_GITDIR}" add "${_HOME}/${_currentSource}/.description"
+					git -C "${_HOME}" --git-dir="${_GITDIR}" commit -q -m "[source] updated '${_currentSource}' description"
 					# TODO fix this...when desc is not saved, error 
 					;;
 				P)
@@ -3419,7 +3445,7 @@ HEREDOC
 					;;
 				$'\x07')
 					# ctrl-g (run git status)
-  				git -C "${_HOME}" --git-dir="${_GITDIR}" status
+					git -C "${_HOME}" --git-dir="${_GITDIR}" status
 					;;
 				0)
 					printenv | grep "^_"
@@ -3455,24 +3481,24 @@ HEREDOC
 
 main() {
 	# read all the positional parameters
-  _getOpts "${@}"
-  # setup the environment after processing all command line parameters
-  _setEnv
+	_getOpts "${@}"
+	# setup the environment after processing all command line parameters
+	_setEnv
 	# initialize the state machine
 	_stateInitialize
 	# set up trap to release lock on exit
 	trap _releaseLock EXIT
-  # validate the environment (external tools required)
-  _checkExternalTools || { _error "cannot run until these problems are resolved"; return 1; }
-  # check for the working directory
-  _checkHome || { _error "cannot run without a working environment"; return 1;  }
+	# validate the environment (external tools required)
+	_checkExternalTools || { _error "cannot run until these problems are resolved"; return 1; }
+	# check for the working directory
+	_checkHome || { _error "cannot run without a working environment"; return 1;  }
 	# check health
 	# TODO eg check for .swp file from vim crash
 	#
-  # enter custom shell if no arguments
-  [ -z "${_subCommand:-}" ] && _shell
-  # otherwise, pass the commands to the called "command"
-  [[ -n "${_subCommand:-}" ]] && _debug "now calling the eval to run '${_subCommand:-}'"
-  [[ -n "${_subCommand:-}" ]] && eval _"${_subCommand}" || :
+	# enter custom shell if no arguments
+	[ -z "${_subCommand:-}" ] && _shell
+	# otherwise, pass the commands to the called "command"
+	[[ -n "${_subCommand:-}" ]] && _debug "now calling the eval to run '${_subCommand:-}'"
+	[[ -n "${_subCommand:-}" ]] && eval _"${_subCommand}" || :
 }
 main "${@}"
