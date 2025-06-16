@@ -1151,6 +1151,8 @@ _germFZF () {
 		FZF_COMMAND+=(--bind="ctrl-n:execute-silent(_stateSet germFZF/nextAction new-entity)")
 		FZF_COMMAND+=(--bind="ctrl-n:+execute(_processEnter {} {q} {n})")
 		FZF_COMMAND+=(--bind="ctrl-n:+transform-header(_setHeader)")
+		FZF_COMMAND+=(--bind="ctrl-n:+reload(_loadList)")
+		FZF_COMMAND+=(--bind="ctrl-n:+first+clear-query")
 		
 		# create new "typed query" source 
 		FZF_COMMAND+=(--bind="alt-enter:execute-silent(_stateSet germFZF/nextAction new-source)")
@@ -1463,12 +1465,6 @@ _processEnter () {
 							;;
 					esac
 				fi
-				# update the state and return (nothing more to do)
-				_stateSet germFZF/viewMode "${_nextViewMode}"
-				#
-				# TODO, something needs to change here, for when i add a new entry,
-				# and we return, the new entry does not show up. this is all wrapped
-				# up in the same problem _processEnter creates.
 				;;
 
 			delete-source)
